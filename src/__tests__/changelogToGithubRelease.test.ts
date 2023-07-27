@@ -8,6 +8,9 @@ const changelog = `
 ## 1.0.0
 - aaa [#123](https://github.com/foo/bar/pull/123) ([@user](https://github.com/user)).
 - bbb.
+
+## 0.1.0
+- ccc.
 `;
 
 test('rewrite change items matching specified version', async () => {
