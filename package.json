@@ -1,6 +1,6 @@
 {
   "name": "changelog-to-github-release-action",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "private": true,
   "description": "GitHub Action to convert CHANGELOG to GitHub Release",
   "repository": "ybiquitous/changelog-to-github-release-action",
