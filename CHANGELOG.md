@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.0.2
 
 - Fixed: missing `dist/` files.
 
