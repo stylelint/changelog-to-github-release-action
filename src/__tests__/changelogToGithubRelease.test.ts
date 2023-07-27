@@ -16,7 +16,7 @@ test('rewrite change items matching specified version', async () => {
 `);
 });
 
-test('do nothing when a specified version is not found', async () => {
+test('raise an error when a specified version is not found', async () => {
 	await expect(changelogToGithubRelease(changelog, '2.0.0')).rejects.toThrow(
 		'Not found version: 2.0.0',
 	);
