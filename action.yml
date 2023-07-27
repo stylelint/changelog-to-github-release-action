@@ -1,0 +1,26 @@
+name: 'changelog-to-github-release-action'
+description: 'GitHub Action to convert CHANGELOG to GitHub Release'
+author: 'Masafumi Koba'
+inputs:
+  tag:
+    description: 'Tag name'
+    required: true
+  changelog:
+    description: 'Changelog file path'
+    required: false
+    default: 'CHANGELOG.md'
+  token:
+    description: 'GitHub token'
+    required: false
+    default: '${{ github.token }}'
+  repo:
+    description: 'Repository'
+    required: false
+    default: '${{ github.repository }}'
+  draft:
+    description: 'Whether create a draft release'
+    required: false
+    default: 'false'
+runs:
+  using: 'node16'
+  main: 'dist/index.js'
