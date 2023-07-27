@@ -26,4 +26,6 @@ jobs:
           tag: ${{ github.ref_name }}
 ```
 
-For all inputs, see [`action.yml`](action.yml).
+## Inputs
+
+See [`action.yml`](action.yml).
