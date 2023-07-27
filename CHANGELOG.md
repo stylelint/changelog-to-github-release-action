@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Fixed: `@ts-expect-error` comments ([#5](https://github.com/ybiquitous/changelog-to-github-release-action/pull/5)) ([@ybiquitous](https://github.com/ybiquitous)).
+
 ## 0.0.3
 
 - Fixed: missing a result message when a release is created.
