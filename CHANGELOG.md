@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.0.3
 
 - Fixed: missing a result message when a release is created.
 
