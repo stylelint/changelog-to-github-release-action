@@ -21,13 +21,14 @@ async function main() {
 	const body = await changelogToGithubRelease(changelog, tag);
 
 	const client = getOctokit(token);
-	await client.rest.repos.createRelease({
+	const { data } = await client.rest.repos.createRelease({
 		owner,
 		repo,
 		tag_name: tag,
 		body,
 		draft,
 	});
+	core.info(`Created release: ${data.html_url}`);
 }
 
 if (process.env['NODE_ENV'] !== 'test') {

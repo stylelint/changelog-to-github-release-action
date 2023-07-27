@@ -28682,13 +28682,14 @@ async function main() {
     const changelog = await (0,promises_namespaceObject.readFile)(changelogPath, 'utf-8');
     const body = await changelogToGithubRelease(changelog, tag);
     const client = (0,github.getOctokit)(token);
-    await client.rest.repos.createRelease({
+    const { data } = await client.rest.repos.createRelease({
         owner,
         repo,
         tag_name: tag,
         body,
         draft,
     });
+    core.info(`Created release: ${data.html_url}`);
 }
 if (process.env['NODE_ENV'] !== 'test') {
     main().catch((error) => {
