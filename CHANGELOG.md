@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.0.4
 
 - Fixed: `@ts-expect-error` comments ([#5](https://github.com/ybiquitous/changelog-to-github-release-action/pull/5)) ([@ybiquitous](https://github.com/ybiquitous)).
 
