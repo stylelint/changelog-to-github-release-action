@@ -1,0 +1,19 @@
+name: Release
+
+on:
+  push:
+    tags: ['**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Create release
+        uses: ./
+        with:
+          tag: ${{ github.ref_name }}
