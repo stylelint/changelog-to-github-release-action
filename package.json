@@ -8,7 +8,7 @@
   "author": "Masafumi Koba",
   "type": "module",
   "scripts": {
-    "build": "ncc build src/main.ts",
+    "build": "esbuild src/main.ts --outfile=dist/index.cjs --bundle --platform=node",
     "format": "prettier --write --cache .",
     "lint": "npm-run-all --parallel --continue-on-error lint:*",
     "lint:formatting": "prettier . --check --cache",
@@ -29,7 +29,7 @@
     "@tsconfig/node16": "^16.1.0",
     "@tsconfig/strictest": "^2.0.1",
     "@types/mdast": "^4.0.0",
-    "@vercel/ncc": "^0.36.1",
+    "esbuild": "^0.18.17",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.0.0",
     "typescript": "^5.1.6",
