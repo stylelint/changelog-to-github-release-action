@@ -23,18 +23,17 @@ function extractChangeItems({ version }: { version: string }) {
 		}
 
 		// Rewrite a link to a PR notation (#123) or a user mention (@username).
-		visit(list, 'link', (node) => {
-			const [text] = node.children;
-			if (text?.type !== 'text') return;
+		visit(list, 'link', (node, index, parent) => {
+			if (index === undefined || parent === undefined) return CONTINUE;
 
-			// @ts-expect-error -- TS2322: Type '"text"' is not assignable to type '"link"'.
-			node.type = 'text';
-			// @ts-expect-error -- TS2339: Property 'value' does not exist on type 'Link'.
-			node.value = text.value;
+			const [text] = node.children;
+			if (text?.type !== 'text') return CONTINUE;
+
+			parent.children.splice(index, 1, { type: 'text', value: text.value });
+			return CONTINUE;
 		});
 
-		tree.children.length = 0; // clear
-		tree.children.push(list);
+		tree.children = [list];
 	};
 }
 
