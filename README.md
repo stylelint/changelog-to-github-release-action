@@ -25,7 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Create release
-        uses: ybiquitous/changelog-to-github-release-action@main
+        uses: stylelint/changelog-to-github-release-action@main
         with:
           tag: ${{ github.ref_name }}
 ```
