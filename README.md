@@ -33,3 +33,7 @@ jobs:
 ## Inputs
 
 See [`action.yml`](action.yml).
+
+## For developers
+
+See the [developer guide](DEVELOPMENT.md).
