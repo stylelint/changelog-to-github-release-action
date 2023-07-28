@@ -2,7 +2,7 @@
 
 ## Release
 
-1. Update `CHANGELOG.md` and ensure the next version is correct.
+1. Update [`CHANGELOG.md`](CHANGELOG.md) and ensure the next version is correct.
 2. Run `npm version <next_version>`.
 3. Run `git push --follow-tags`.
 
