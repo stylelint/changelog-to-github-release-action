@@ -9,7 +9,7 @@ name: Release
 
 on:
   push:
-    tags: ['**']
+    tags: ["**"]
 
 concurrency:
   group: ${{ github.workflow }}
