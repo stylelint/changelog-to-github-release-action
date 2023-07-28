@@ -7,6 +7,10 @@
 ```yaml
 name: Release
 
+on:
+  push:
+    tags: ["**"]
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
