@@ -1,6 +1,6 @@
 name: 'changelog-to-github-release-action'
 description: 'GitHub Action to convert CHANGELOG to GitHub Release'
-author: 'Masafumi Koba'
+author: 'Stylelint'
 inputs:
   tag:
     description: 'Tag name'
