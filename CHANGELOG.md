@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.0.6
+
+- Fixed: make an empty change for testing the release workflow.
+
 ## 0.0.5
 
 - Fixed: transfer this repository to the Stylelint organization.
