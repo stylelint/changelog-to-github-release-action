@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.0.5
 
 - Fixed: transfer this repository to the Stylelint organization.
 
