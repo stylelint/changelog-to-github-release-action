@@ -3,7 +3,7 @@
   "version": "0.0.4",
   "private": true,
   "description": "GitHub Action to convert CHANGELOG to GitHub Release",
-  "repository": "ybiquitous/changelog-to-github-release-action",
+  "repository": "stylelint/changelog-to-github-release-action",
   "license": "MIT",
   "author": "Masafumi Koba",
   "type": "module",
