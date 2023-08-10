@@ -4,6 +4,8 @@
 
 ## Usage
 
+Create `.github/workflows/release.yml` with the following content:
+
 ```yaml
 name: Release
 
@@ -26,13 +28,20 @@ jobs:
         uses: actions/checkout@v3
       - name: Create release
         uses: stylelint/changelog-to-github-release-action@main
-        with:
-          tag: ${{ github.ref_name }}
 ```
 
 ## Inputs
 
-See [`action.yml`](action.yml).
+You can tune this action by the input parameters, for example:
+
+```yaml
+- name: Create release
+  uses: stylelint/changelog-to-github-release-action@main
+  with:
+    draft: true
+```
+
+For all the inputs, see [`action.yml`](action.yml).
 
 ## For developers
 
