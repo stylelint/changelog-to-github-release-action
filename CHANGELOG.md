@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- No actual changes.
+
 ## 0.1.0
 
 - Added: a default value for the `tag` input.
