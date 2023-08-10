@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.1.0
 
 - Added: a default value for the `tag` input.
 
