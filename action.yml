@@ -4,7 +4,8 @@ author: 'Stylelint'
 inputs:
   tag:
     description: 'Tag name'
-    required: true
+    required: false
+    default: '${{ github.ref_name }}'
   changelog:
     description: 'Changelog file path'
     required: false

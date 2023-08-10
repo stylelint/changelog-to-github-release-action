@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Added: a default value for the `tag` input.
+
 ## 0.0.7
 
 - Fixed: make an empty change for testing the release workflow.
