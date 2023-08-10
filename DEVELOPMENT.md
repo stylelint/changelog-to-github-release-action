@@ -9,7 +9,7 @@ Use the latest version of Node.js and npm.
 
 ## Release
 
-1. Update [`CHANGELOG.md`](CHANGELOG.md) and ensure the next version is correct.
+1. Update [`CHANGELOG.md`](CHANGELOG.md) to set the next version and commit the change with a message like `Prepare x.y.z`.
 2. Run `npm version <next_version>`.
 3. Run `git push --follow-tags`.
 
