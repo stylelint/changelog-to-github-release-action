@@ -37,7 +37,7 @@
   "devDependencies": {
     "@stylelint/prettier-config": "^3.0.0",
     "@stylelint/remark-preset": "^4.0.0",
-    "@tsconfig/node16": "^16.1.1",
+    "@tsconfig/node20": "^20.1.2",
     "@tsconfig/strictest": "^2.0.2",
     "@types/mdast": "^4.0.0",
     "@vercel/ncc": "^0.36.1",
@@ -50,6 +50,6 @@
     "vitest": "^0.34.3"
   },
   "engines": {
-    "node": ">=16"
+    "node": ">=20"
   }
 }
