@@ -8,6 +8,8 @@ on:
 jobs:
   lint:
     uses: stylelint/.github/.github/workflows/lint.yml@main
+    with:
+      node-version: '20'
 
   test:
     uses: stylelint/.github/.github/workflows/test.yml@main
