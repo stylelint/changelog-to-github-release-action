@@ -7,6 +7,10 @@ updates:
     labels:
       - 'pr: dependencies'
     versioning-strategy: increase
+    groups:
+      development-dependencies:
+        dependency-type: development
+        exclude-patterns: ['remark-*']
 
   - package-ecosystem: github-actions
     directory: '/'
