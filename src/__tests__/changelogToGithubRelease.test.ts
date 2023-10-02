@@ -14,8 +14,8 @@ const changelog = `
 `;
 
 test('rewrite change items matching specified version', async () => {
-	await expect(changelogToGithubRelease(changelog, '1.0.0')).resolves.toBe(`*   aaa #123 (@user).
-*   bbb.
+	await expect(changelogToGithubRelease(changelog, '1.0.0')).resolves.toBe(`* aaa #123 (@user).
+* bbb.
 `);
 });
 
