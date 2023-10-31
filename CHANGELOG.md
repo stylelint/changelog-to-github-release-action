@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.1.2
 
 - Fixed: bump `@actions/github` to `6.0.0`.
 
