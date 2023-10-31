@@ -10,13 +10,14 @@
   "scripts": {
     "prepare": "husky install",
     "build": "ncc build src/main.ts",
+    "build-check": "git diff --exit-code -- dist/",
     "format": "prettier --write --cache .",
     "lint": "npm-run-all --parallel --continue-on-error lint:*",
     "lint:formatting": "prettier . --check --cache",
     "lint:md": "remark . --quiet --frail",
     "lint:types": "tsc",
     "pretest": "npm run lint",
-    "test": "vitest run && npm run build",
+    "test": "vitest run && npm run build && npm run build-check",
     "watch": "vitest watch"
   },
   "lint-staged": {
