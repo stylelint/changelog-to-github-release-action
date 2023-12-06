@@ -1,4 +1,5 @@
-import { expect, test } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert/strict';
 
 import { changelogToGithubRelease } from '../changelogToGithubRelease.js';
 
@@ -14,13 +15,23 @@ const changelog = `
 `;
 
 test('rewrite change items matching specified version', async () => {
-	await expect(changelogToGithubRelease(changelog, '1.0.0')).resolves.toBe(`* aaa #123 (@user).
+	const result = await changelogToGithubRelease(changelog, '1.0.0');
+	assert.equal(
+		result,
+		`* aaa #123 (@user).
 * bbb.
-`);
+`,
+	);
 });
 
 test('raise an error when a specified version is not found', async () => {
-	await expect(changelogToGithubRelease(changelog, '2.0.0')).rejects.toThrow(
-		'Not found version: 2.0.0',
+	assert.rejects(
+		async () => {
+			await changelogToGithubRelease(changelog, '2.0.0');
+		},
+		{
+			name: 'Error',
+			message: 'Not found version: 2.0.0',
+		},
 	);
 });

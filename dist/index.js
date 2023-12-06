@@ -49688,78 +49688,102 @@ function lib_isUint8Array(value) {
  */
 const remark = unified().use(remarkParse).use(remarkStringify).freeze()
 
-;// CONCATENATED MODULE: ./src/changelogToGithubRelease.ts
+;// CONCATENATED MODULE: ./src/changelogToGithubRelease.js
 
 
+
+/**
+ * @param {{ version: string }} options
+ * @returns {(tree: import('mdast').Root) => void}
+ */
 function extractChangeItems({ version }) {
-    return (tree) => {
-        let list;
-        visit(tree, 'heading', (node, index, parent) => {
-            const [text] = node.children;
-            if (text?.type === 'text' && text.value === version && parent && index !== undefined) {
-                const nextSibling = parent.children[index + 1];
-                if (nextSibling?.type === 'list') {
-                    list = nextSibling;
-                    return EXIT;
-                }
-            }
-            return CONTINUE;
-        });
-        if (!list) {
-            throw new Error(`Not found version: ${version}`);
-        }
-        // Rewrite a link to a PR notation (#123) or a user mention (@username).
-        visit(list, 'link', (node, index, parent) => {
-            if (index === undefined || parent === undefined)
-                return CONTINUE;
-            const [text] = node.children;
-            if (text?.type !== 'text')
-                return CONTINUE;
-            parent.children.splice(index, 1, { type: 'text', value: text.value });
-            return CONTINUE;
-        });
-        tree.children = [list];
-    };
-}
-async function changelogToGithubRelease(changelog, version) {
-    const file = await remark().use(extractChangeItems, { version }).process(changelog);
-    return String(file);
+	return (tree) => {
+		/** @type {import('mdast').List | undefined} */
+		let list;
+
+		visit(tree, 'heading', (node, index, parent) => {
+			const [text] = node.children;
+			if (text?.type === 'text' && text.value === version && parent && index !== undefined) {
+				const nextSibling = parent.children[index + 1];
+				if (nextSibling?.type === 'list') {
+					list = nextSibling;
+					return EXIT;
+				}
+			}
+			return CONTINUE;
+		});
+
+		if (!list) {
+			throw new Error(`Not found version: ${version}`);
+		}
+
+		// Rewrite a link to a PR notation (#123) or a user mention (@username).
+		visit(list, 'link', (node, index, parent) => {
+			if (index === undefined || parent === undefined) return CONTINUE;
+
+			const [text] = node.children;
+			if (text?.type !== 'text') return CONTINUE;
+
+			parent.children.splice(index, 1, { type: 'text', value: text.value });
+			return CONTINUE;
+		});
+
+		tree.children = [list];
+	};
 }
 
-;// CONCATENATED MODULE: ./src/main.ts
+/**
+ * @param {string} changelog
+ * @param {string} version
+ * @returns {Promise<string>}
+ */
+async function changelogToGithubRelease(changelog, version) {
+	const file = await remark().use(extractChangeItems, { version }).process(changelog);
+
+	return String(file);
+}
+
+;// CONCATENATED MODULE: ./src/main.js
+
+
+
 
 
 
 
 async function main() {
-    const tag = core.getInput('tag');
-    const changelogPath = core.getInput('changelog');
-    const token = core.getInput('token');
-    const draft = core.getInput('draft') === 'true';
-    const repository = core.getInput('repo');
-    const [owner, repo] = repository.split('/', 2);
-    if (!(owner && repo)) {
-        throw new Error(`Invalid 'repo' input: ${repository}`);
-    }
-    const changelog = await (0,promises_namespaceObject.readFile)(changelogPath, 'utf-8');
-    const body = await changelogToGithubRelease(changelog, tag);
-    const client = (0,github.getOctokit)(token);
-    const { data } = await client.rest.repos.createRelease({
-        owner,
-        repo,
-        tag_name: tag,
-        body,
-        draft,
-    });
-    core.info(`Created release: ${data.html_url}`);
+	const tag = core.getInput('tag');
+	const changelogPath = core.getInput('changelog');
+	const token = core.getInput('token');
+	const draft = core.getInput('draft') === 'true';
+	const repository = core.getInput('repo');
+
+	const [owner, repo] = repository.split('/', 2);
+	if (!(owner && repo)) {
+		throw new Error(`Invalid 'repo' input: ${repository}`);
+	}
+
+	const changelog = await (0,promises_namespaceObject.readFile)(changelogPath, 'utf-8');
+	const body = await changelogToGithubRelease(changelog, tag);
+
+	const client = (0,github.getOctokit)(token);
+	const { data } = await client.rest.repos.createRelease({
+		owner,
+		repo,
+		tag_name: tag,
+		body,
+		draft,
+	});
+	core.info(`Created release: ${data.html_url}`);
 }
+
 if (process.env['NODE_ENV'] !== 'test') {
-    main().catch((error) => {
-        if (error instanceof Error) {
-            core.error(error);
-        }
-        core.setFailed('Unexpexted error raised');
-    });
+	main().catch((error) => {
+		if (error instanceof Error) {
+			core.error(error);
+		}
+		core.setFailed('Unexpexted error raised');
+	});
 }
 
 })();
