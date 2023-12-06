@@ -1,10 +1,14 @@
 import { remark } from 'remark';
-import type { Root, List } from 'mdast';
 import { visit, CONTINUE, EXIT } from 'unist-util-visit';
 
-function extractChangeItems({ version }: { version: string }) {
-	return (tree: Root) => {
-		let list: List | undefined;
+/**
+ * @param {{ version: string }} options
+ * @returns {(tree: import('mdast').Root) => void}
+ */
+function extractChangeItems({ version }) {
+	return (tree) => {
+		/** @type {import('mdast').List | undefined} */
+		let list;
 
 		visit(tree, 'heading', (node, index, parent) => {
 			const [text] = node.children;
@@ -37,10 +41,12 @@ function extractChangeItems({ version }: { version: string }) {
 	};
 }
 
-export async function changelogToGithubRelease(
-	changelog: string,
-	version: string,
-): Promise<string> {
+/**
+ * @param {string} changelog
+ * @param {string} version
+ * @returns {Promise<string>}
+ */
+export async function changelogToGithubRelease(changelog, version) {
 	const file = await remark().use(extractChangeItems, { version }).process(changelog);
 
 	return String(file);
