@@ -30830,7 +30830,7 @@ var __webpack_exports__ = {};
 // This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
 (() => {
 
-// NAMESPACE OBJECT: ./node_modules/remark-parse/node_modules/micromark/lib/constructs.js
+// NAMESPACE OBJECT: ./node_modules/micromark/lib/constructs.js
 var constructs_namespaceObject = {};
 __nccwpck_require__.r(constructs_namespaceObject);
 __nccwpck_require__.d(constructs_namespaceObject, {
@@ -30851,7 +30851,7 @@ const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.ur
 var core = __nccwpck_require__(2186);
 // EXTERNAL MODULE: ./node_modules/@actions/github/lib/github.js
 var github = __nccwpck_require__(5438);
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/mdast-util-to-string/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-string/lib/index.js
 /**
  * @typedef {import('mdast').Nodes} Nodes
  *
@@ -30961,7 +30961,7 @@ function node(value) {
   return Boolean(value && typeof value === 'object')
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-chunked/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-chunked/index.js
 /**
  * Like `Array#splice`, but smarter for giant arrays.
  *
@@ -31044,7 +31044,259 @@ function push(list, items) {
   return items
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-subtokenize/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-subtokenize/lib/splice-buffer.js
+/**
+ * Some of the internal operations of micromark do lots of editing
+ * operations on very large arrays. This runs into problems with two
+ * properties of most circa-2020 JavaScript interpreters:
+ *
+ *  - Array-length modifications at the high end of an array (push/pop) are
+ *    expected to be common and are implemented in (amortized) time
+ *    proportional to the number of elements added or removed, whereas
+ *    other operations (shift/unshift and splice) are much less efficient.
+ *  - Function arguments are passed on the stack, so adding tens of thousands
+ *    of elements to an array with `arr.push[...newElements]` will frequently
+ *    cause stack overflows. (see <https://stackoverflow.com/questions/22123769/rangeerror-maximum-call-stack-size-exceeded-why>)
+ *
+ * SpliceBuffers are an implementation of gap buffers, which are a
+ * generalization of the "queue made of two stacks" idea. The splice buffer
+ * maintains a cursor, and moving the cursor has cost proportional to the
+ * distance the cursor moves, but inserting, deleting, or splicing in
+ * new information at the cursor is as efficient as the push/pop operation.
+ * This allows for an efficient sequence of splices (or pushes, pops, shifts,
+ * or unshifts) as long such edits happen at the same part of the array or
+ * generally sweep through the array from the beginning to the end.
+ *
+ * The interface for splice buffers also supports large numbers of inputs by
+ * passing a single array argument rather passing multiple arguments on the
+ * function call stack.
+ *
+ * @template T
+ *   Item type.
+ */
+class SpliceBuffer {
+  /**
+   * @param {ReadonlyArray<T> | null | undefined} [initial]
+   *   Initial items (optional).
+   * @returns
+   *   Splice buffer.
+   */
+  constructor(initial) {
+    /** @type {Array<T>} */
+    this.left = initial ? [...initial] : [];
+    /** @type {Array<T>} */
+    this.right = [];
+  }
+
+  /**
+   * Array access;
+   * does not move the cursor.
+   *
+   * @param {number} index
+   *   Index.
+   * @return {T}
+   *   Item.
+   */
+  get(index) {
+    if (index < 0 || index >= this.left.length + this.right.length) {
+      throw new RangeError('Cannot access index `' + index + '` in a splice buffer of size `' + (this.left.length + this.right.length) + '`');
+    }
+    if (index < this.left.length) return this.left[index];
+    return this.right[this.right.length - index + this.left.length - 1];
+  }
+
+  /**
+   * The length of the splice buffer, one greater than the largest index in the
+   * array.
+   */
+  get length() {
+    return this.left.length + this.right.length;
+  }
+
+  /**
+   * Remove and return `list[0]`;
+   * moves the cursor to `0`.
+   *
+   * @returns {T | undefined}
+   *   Item, optional.
+   */
+  shift() {
+    this.setCursor(0);
+    return this.right.pop();
+  }
+
+  /**
+   * Slice the buffer to get an array;
+   * does not move the cursor.
+   *
+   * @param {number} start
+   *   Start.
+   * @param {number | null | undefined} [end]
+   *   End (optional).
+   * @returns {Array<T>}
+   *   Array of items.
+   */
+  slice(start, end) {
+    /** @type {number} */
+    const stop = end === null || end === undefined ? Number.POSITIVE_INFINITY : end;
+    if (stop < this.left.length) {
+      return this.left.slice(start, stop);
+    }
+    if (start > this.left.length) {
+      return this.right.slice(this.right.length - stop + this.left.length, this.right.length - start + this.left.length).reverse();
+    }
+    return this.left.slice(start).concat(this.right.slice(this.right.length - stop + this.left.length).reverse());
+  }
+
+  /**
+   * Mimics the behavior of Array.prototype.splice() except for the change of
+   * interface necessary to avoid segfaults when patching in very large arrays.
+   *
+   * This operation moves cursor is moved to `start` and results in the cursor
+   * placed after any inserted items.
+   *
+   * @param {number} start
+   *   Start;
+   *   zero-based index at which to start changing the array;
+   *   negative numbers count backwards from the end of the array and values
+   *   that are out-of bounds are clamped to the appropriate end of the array.
+   * @param {number | null | undefined} [deleteCount=0]
+   *   Delete count (default: `0`);
+   *   maximum number of elements to delete, starting from start.
+   * @param {Array<T> | null | undefined} [items=[]]
+   *   Items to include in place of the deleted items (default: `[]`).
+   * @return {Array<T>}
+   *   Any removed items.
+   */
+  splice(start, deleteCount, items) {
+    /** @type {number} */
+    const count = deleteCount || 0;
+    this.setCursor(Math.trunc(start));
+    const removed = this.right.splice(this.right.length - count, Number.POSITIVE_INFINITY);
+    if (items) chunkedPush(this.left, items);
+    return removed.reverse();
+  }
+
+  /**
+   * Remove and return the highest-numbered item in the array, so
+   * `list[list.length - 1]`;
+   * Moves the cursor to `length`.
+   *
+   * @returns {T | undefined}
+   *   Item, optional.
+   */
+  pop() {
+    this.setCursor(Number.POSITIVE_INFINITY);
+    return this.left.pop();
+  }
+
+  /**
+   * Inserts a single item to the high-numbered side of the array;
+   * moves the cursor to `length`.
+   *
+   * @param {T} item
+   *   Item.
+   * @returns {undefined}
+   *   Nothing.
+   */
+  push(item) {
+    this.setCursor(Number.POSITIVE_INFINITY);
+    this.left.push(item);
+  }
+
+  /**
+   * Inserts many items to the high-numbered side of the array.
+   * Moves the cursor to `length`.
+   *
+   * @param {Array<T>} items
+   *   Items.
+   * @returns {undefined}
+   *   Nothing.
+   */
+  pushMany(items) {
+    this.setCursor(Number.POSITIVE_INFINITY);
+    chunkedPush(this.left, items);
+  }
+
+  /**
+   * Inserts a single item to the low-numbered side of the array;
+   * Moves the cursor to `0`.
+   *
+   * @param {T} item
+   *   Item.
+   * @returns {undefined}
+   *   Nothing.
+   */
+  unshift(item) {
+    this.setCursor(0);
+    this.right.push(item);
+  }
+
+  /**
+   * Inserts many items to the low-numbered side of the array;
+   * moves the cursor to `0`.
+   *
+   * @param {Array<T>} items
+   *   Items.
+   * @returns {undefined}
+   *   Nothing.
+   */
+  unshiftMany(items) {
+    this.setCursor(0);
+    chunkedPush(this.right, items.reverse());
+  }
+
+  /**
+   * Move the cursor to a specific position in the array. Requires
+   * time proportional to the distance moved.
+   *
+   * If `n < 0`, the cursor will end up at the beginning.
+   * If `n > length`, the cursor will end up at the end.
+   *
+   * @param {number} n
+   *   Position.
+   * @return {undefined}
+   *   Nothing.
+   */
+  setCursor(n) {
+    if (n === this.left.length || n > this.left.length && this.right.length === 0 || n < 0 && this.left.length === 0) return;
+    if (n < this.left.length) {
+      // Move cursor to the this.left
+      const removed = this.left.splice(n, Number.POSITIVE_INFINITY);
+      chunkedPush(this.right, removed.reverse());
+    } else {
+      // Move cursor to the this.right
+      const removed = this.right.splice(this.left.length + this.right.length - n, Number.POSITIVE_INFINITY);
+      chunkedPush(this.left, removed.reverse());
+    }
+  }
+}
+
+/**
+ * Avoid stack overflow by pushing items onto the stack in segments
+ *
+ * @template T
+ *   Item type.
+ * @param {Array<T>} list
+ *   List to inject into.
+ * @param {ReadonlyArray<T>} right
+ *   Items to inject.
+ * @return {undefined}
+ *   Nothing.
+ */
+function chunkedPush(list, right) {
+  /** @type {number} */
+  let chunkStart = 0;
+  if (right.length < 10000) {
+    list.push(...right);
+  } else {
+    while (chunkStart < right.length) {
+      list.push(...right.slice(chunkStart, chunkStart + 10000));
+      chunkStart += 10000;
+    }
+  }
+}
+;// CONCATENATED MODULE: ./node_modules/micromark-util-subtokenize/index.js
 /**
  * @typedef {import('micromark-util-types').Chunk} Chunk
  * @typedef {import('micromark-util-types').Event} Event
@@ -31052,64 +31304,61 @@ function push(list, items) {
  */
 
 
+
+
+// Hidden API exposed for testing.
+
+
 /**
  * Tokenize subcontent.
  *
- * @param {Array<Event>} events
+ * @param {Array<Event>} eventsArray
  *   List of events.
  * @returns {boolean}
  *   Whether subtokens were found.
- */ // eslint-disable-next-line complexity
-function subtokenize(events) {
+ */
+// eslint-disable-next-line complexity
+function subtokenize(eventsArray) {
   /** @type {Record<string, number>} */
-  const jumps = {}
-  let index = -1
+  const jumps = {};
+  let index = -1;
   /** @type {Event} */
-  let event
+  let event;
   /** @type {number | undefined} */
-  let lineIndex
+  let lineIndex;
   /** @type {number} */
-  let otherIndex
+  let otherIndex;
   /** @type {Event} */
-  let otherEvent
+  let otherEvent;
   /** @type {Array<Event>} */
-  let parameters
+  let parameters;
   /** @type {Array<Event>} */
-  let subevents
+  let subevents;
   /** @type {boolean | undefined} */
-  let more
+  let more;
+  const events = new SpliceBuffer(eventsArray);
   while (++index < events.length) {
     while (index in jumps) {
-      index = jumps[index]
+      index = jumps[index];
     }
-    event = events[index]
+    event = events.get(index);
 
     // Add a hook for the GFM tasklist extension, which needs to know if text
     // is in the first content of a list item.
-    if (
-      index &&
-      event[1].type === 'chunkFlow' &&
-      events[index - 1][1].type === 'listItemPrefix'
-    ) {
-      subevents = event[1]._tokenizer.events
-      otherIndex = 0
-      if (
-        otherIndex < subevents.length &&
-        subevents[otherIndex][1].type === 'lineEndingBlank'
-      ) {
-        otherIndex += 2
+    if (index && event[1].type === "chunkFlow" && events.get(index - 1)[1].type === "listItemPrefix") {
+      subevents = event[1]._tokenizer.events;
+      otherIndex = 0;
+      if (otherIndex < subevents.length && subevents[otherIndex][1].type === "lineEndingBlank") {
+        otherIndex += 2;
       }
-      if (
-        otherIndex < subevents.length &&
-        subevents[otherIndex][1].type === 'content'
-      ) {
+      if (otherIndex < subevents.length && subevents[otherIndex][1].type === "content") {
         while (++otherIndex < subevents.length) {
-          if (subevents[otherIndex][1].type === 'content') {
-            break
+          if (subevents[otherIndex][1].type === "content") {
+            break;
           }
-          if (subevents[otherIndex][1].type === 'chunkText') {
-            subevents[otherIndex][1]._isInFirstContentOfListItem = true
-            otherIndex++
+          if (subevents[otherIndex][1].type === "chunkText") {
+            subevents[otherIndex][1]._isInFirstContentOfListItem = true;
+            otherIndex++;
           }
         }
       }
@@ -31118,159 +31367,154 @@ function subtokenize(events) {
     // Enter.
     if (event[0] === 'enter') {
       if (event[1].contentType) {
-        Object.assign(jumps, subcontent(events, index))
-        index = jumps[index]
-        more = true
+        Object.assign(jumps, subcontent(events, index));
+        index = jumps[index];
+        more = true;
       }
     }
     // Exit.
     else if (event[1]._container) {
-      otherIndex = index
-      lineIndex = undefined
+      otherIndex = index;
+      lineIndex = undefined;
       while (otherIndex--) {
-        otherEvent = events[otherIndex]
-        if (
-          otherEvent[1].type === 'lineEnding' ||
-          otherEvent[1].type === 'lineEndingBlank'
-        ) {
+        otherEvent = events.get(otherIndex);
+        if (otherEvent[1].type === "lineEnding" || otherEvent[1].type === "lineEndingBlank") {
           if (otherEvent[0] === 'enter') {
             if (lineIndex) {
-              events[lineIndex][1].type = 'lineEndingBlank'
+              events.get(lineIndex)[1].type = "lineEndingBlank";
             }
-            otherEvent[1].type = 'lineEnding'
-            lineIndex = otherIndex
+            otherEvent[1].type = "lineEnding";
+            lineIndex = otherIndex;
           }
         } else {
-          break
+          break;
         }
       }
       if (lineIndex) {
         // Fix position.
-        event[1].end = Object.assign({}, events[lineIndex][1].start)
+        event[1].end = Object.assign({}, events.get(lineIndex)[1].start);
 
         // Switch container exit w/ line endings.
-        parameters = events.slice(lineIndex, index)
-        parameters.unshift(event)
-        splice(events, lineIndex, index - lineIndex + 1, parameters)
+        parameters = events.slice(lineIndex, index);
+        parameters.unshift(event);
+        events.splice(lineIndex, index - lineIndex + 1, parameters);
       }
     }
   }
-  return !more
+
+  // The changes to the `events` buffer must be copied back into the eventsArray
+  splice(eventsArray, 0, Number.POSITIVE_INFINITY, events.slice(0));
+  return !more;
 }
 
 /**
  * Tokenize embedded tokens.
  *
- * @param {Array<Event>} events
+ * @param {SpliceBuffer<Event>} events
  * @param {number} eventIndex
  * @returns {Record<string, number>}
  */
 function subcontent(events, eventIndex) {
-  const token = events[eventIndex][1]
-  const context = events[eventIndex][2]
-  let startPosition = eventIndex - 1
+  const token = events.get(eventIndex)[1];
+  const context = events.get(eventIndex)[2];
+  let startPosition = eventIndex - 1;
   /** @type {Array<number>} */
-  const startPositions = []
-  const tokenizer =
-    token._tokenizer || context.parser[token.contentType](token.start)
-  const childEvents = tokenizer.events
+  const startPositions = [];
+  const tokenizer = token._tokenizer || context.parser[token.contentType](token.start);
+  const childEvents = tokenizer.events;
   /** @type {Array<[number, number]>} */
-  const jumps = []
+  const jumps = [];
   /** @type {Record<string, number>} */
-  const gaps = {}
+  const gaps = {};
   /** @type {Array<Chunk>} */
-  let stream
+  let stream;
   /** @type {Token | undefined} */
-  let previous
-  let index = -1
+  let previous;
+  let index = -1;
   /** @type {Token | undefined} */
-  let current = token
-  let adjust = 0
-  let start = 0
-  const breaks = [start]
+  let current = token;
+  let adjust = 0;
+  let start = 0;
+  const breaks = [start];
 
   // Loop forward through the linked tokens to pass them in order to the
   // subtokenizer.
   while (current) {
     // Find the position of the event for this token.
-    while (events[++startPosition][1] !== current) {
+    while (events.get(++startPosition)[1] !== current) {
       // Empty.
     }
-    startPositions.push(startPosition)
+    startPositions.push(startPosition);
     if (!current._tokenizer) {
-      stream = context.sliceStream(current)
+      stream = context.sliceStream(current);
       if (!current.next) {
-        stream.push(null)
+        stream.push(null);
       }
       if (previous) {
-        tokenizer.defineSkip(current.start)
+        tokenizer.defineSkip(current.start);
       }
       if (current._isInFirstContentOfListItem) {
-        tokenizer._gfmTasklistFirstContentOfListItem = true
+        tokenizer._gfmTasklistFirstContentOfListItem = true;
       }
-      tokenizer.write(stream)
+      tokenizer.write(stream);
       if (current._isInFirstContentOfListItem) {
-        tokenizer._gfmTasklistFirstContentOfListItem = undefined
+        tokenizer._gfmTasklistFirstContentOfListItem = undefined;
       }
     }
 
     // Unravel the next token.
-    previous = current
-    current = current.next
+    previous = current;
+    current = current.next;
   }
 
   // Now, loop back through all events (and linked tokens), to figure out which
   // parts belong where.
-  current = token
+  current = token;
   while (++index < childEvents.length) {
     if (
-      // Find a void token that includes a break.
-      childEvents[index][0] === 'exit' &&
-      childEvents[index - 1][0] === 'enter' &&
-      childEvents[index][1].type === childEvents[index - 1][1].type &&
-      childEvents[index][1].start.line !== childEvents[index][1].end.line
-    ) {
-      start = index + 1
-      breaks.push(start)
+    // Find a void token that includes a break.
+    childEvents[index][0] === 'exit' && childEvents[index - 1][0] === 'enter' && childEvents[index][1].type === childEvents[index - 1][1].type && childEvents[index][1].start.line !== childEvents[index][1].end.line) {
+      start = index + 1;
+      breaks.push(start);
       // Help GC.
-      current._tokenizer = undefined
-      current.previous = undefined
-      current = current.next
+      current._tokenizer = undefined;
+      current.previous = undefined;
+      current = current.next;
     }
   }
 
   // Help GC.
-  tokenizer.events = []
+  tokenizer.events = [];
 
   // If there’s one more token (which is the cases for lines that end in an
   // EOF), that’s perfect: the last point we found starts it.
   // If there isn’t then make sure any remaining content is added to it.
   if (current) {
     // Help GC.
-    current._tokenizer = undefined
-    current.previous = undefined
+    current._tokenizer = undefined;
+    current.previous = undefined;
   } else {
-    breaks.pop()
+    breaks.pop();
   }
 
   // Now splice the events from the subtokenizer into the current events,
   // moving back to front so that splice indices aren’t affected.
-  index = breaks.length
+  index = breaks.length;
   while (index--) {
-    const slice = childEvents.slice(breaks[index], breaks[index + 1])
-    const start = startPositions.pop()
-    jumps.unshift([start, start + slice.length - 1])
-    splice(events, start, 2, slice)
+    const slice = childEvents.slice(breaks[index], breaks[index + 1]);
+    const start = startPositions.pop();
+    jumps.push([start, start + slice.length - 1]);
+    events.splice(start, 2, slice);
   }
-  index = -1
+  jumps.reverse();
+  index = -1;
   while (++index < jumps.length) {
-    gaps[adjust + jumps[index][0]] = adjust + jumps[index][1]
-    adjust += jumps[index][1] - jumps[index][0] - 1
+    gaps[adjust + jumps[index][0]] = adjust + jumps[index][1];
+    adjust += jumps[index][1] - jumps[index][0] - 1;
   }
-  return gaps
+  return gaps;
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/postprocess.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/postprocess.js
 /**
  * @typedef {import('micromark-util-types').Event} Event
  */
@@ -31288,7 +31532,7 @@ function postprocess(events) {
   return events
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-combine-extensions/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-combine-extensions/index.js
 /**
  * @typedef {import('micromark-util-types').Extension} Extension
  * @typedef {import('micromark-util-types').Handles} Handles
@@ -31426,12 +31670,10 @@ function htmlExtension(all, extension) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-character/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-character/index.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  */
-
-const unicodePunctuationInternal = regexCheck(/\p{P}/u)
 
 /**
  * Check whether the character code represents an ASCII alpha (`a` through `z`,
@@ -31450,7 +31692,7 @@ const unicodePunctuationInternal = regexCheck(/\p{P}/u)
  * @returns {boolean}
  *   Whether it matches.
  */
-const asciiAlpha = regexCheck(/[A-Za-z]/)
+const asciiAlpha = regexCheck(/[A-Za-z]/);
 
 /**
  * Check whether the character code represents an ASCII alphanumeric (`a`
@@ -31464,7 +31706,7 @@ const asciiAlpha = regexCheck(/[A-Za-z]/)
  * @returns {boolean}
  *   Whether it matches.
  */
-const asciiAlphanumeric = regexCheck(/[\dA-Za-z]/)
+const asciiAlphanumeric = regexCheck(/[\dA-Za-z]/);
 
 /**
  * Check whether the character code represents an ASCII atext.
@@ -31487,7 +31729,7 @@ const asciiAlphanumeric = regexCheck(/[\dA-Za-z]/)
  * @returns {boolean}
  *   Whether it matches.
  */
-const asciiAtext = regexCheck(/[#-'*+\--9=?A-Z^-~]/)
+const asciiAtext = regexCheck(/[#-'*+\--9=?A-Z^-~]/);
 
 /**
  * Check whether a character code is an ASCII control character.
@@ -31505,7 +31747,7 @@ function asciiControl(code) {
     // Special whitespace codes (which have negative values), C0 and Control
     // character DEL
     code !== null && (code < 32 || code === 127)
-  )
+  );
 }
 
 /**
@@ -31519,7 +31761,7 @@ function asciiControl(code) {
  * @returns {boolean}
  *   Whether it matches.
  */
-const asciiDigit = regexCheck(/\d/)
+const asciiDigit = regexCheck(/\d/);
 
 /**
  * Check whether the character code represents an ASCII hex digit (`a` through
@@ -31539,7 +31781,7 @@ const asciiDigit = regexCheck(/\d/)
  * @returns {boolean}
  *   Whether it matches.
  */
-const asciiHexDigit = regexCheck(/[\dA-Fa-f]/)
+const asciiHexDigit = regexCheck(/[\dA-Fa-f]/);
 
 /**
  * Check whether the character code represents ASCII punctuation.
@@ -31554,7 +31796,7 @@ const asciiHexDigit = regexCheck(/[\dA-Fa-f]/)
  * @returns {boolean}
  *   Whether it matches.
  */
-const asciiPunctuation = regexCheck(/[!-/:-@[-`{-~]/)
+const asciiPunctuation = regexCheck(/[!-/:-@[-`{-~]/);
 
 /**
  * Check whether a character code is a markdown line ending.
@@ -31572,7 +31814,7 @@ const asciiPunctuation = regexCheck(/[!-/:-@[-`{-~]/)
  *   Whether it matches.
  */
 function markdownLineEnding(code) {
-  return code !== null && code < -2
+  return code !== null && code < -2;
 }
 
 /**
@@ -31585,7 +31827,7 @@ function markdownLineEnding(code) {
  *   Whether it matches.
  */
 function markdownLineEndingOrSpace(code) {
-  return code !== null && (code < 0 || code === 32)
+  return code !== null && (code < 0 || code === 32);
 }
 
 /**
@@ -31604,7 +31846,7 @@ function markdownLineEndingOrSpace(code) {
  *   Whether it matches.
  */
 function markdownSpace(code) {
-  return code === -2 || code === -1 || code === 32
+  return code === -2 || code === -1 || code === 32;
 }
 
 // Size note: removing ASCII from the regex and using `asciiPunctuation` here
@@ -31623,14 +31865,12 @@ function markdownSpace(code) {
  * [The Unicode Standard](https://www.unicode.org/versions/).
  * Unicode Consortium.
  *
- * @param {Code} code
+ * @param code
  *   Code.
- * @returns {boolean}
+ * @returns
  *   Whether it matches.
  */
-function unicodePunctuation(code) {
-  return asciiPunctuation(code) || unicodePunctuationInternal(code)
-}
+const unicodePunctuation = regexCheck(/\p{P}|\p{S}/u);
 
 /**
  * Check whether the character code represents Unicode whitespace.
@@ -31649,10 +31889,10 @@ function unicodePunctuation(code) {
  *
  * @param code
  *   Code.
- * @returns {boolean}
+ * @returns
  *   Whether it matches.
  */
-const unicodeWhitespace = regexCheck(/\s/)
+const unicodeWhitespace = regexCheck(/\s/);
 
 /**
  * Create a code check from a regex.
@@ -31661,7 +31901,7 @@ const unicodeWhitespace = regexCheck(/\s/)
  * @returns {(code: Code) => boolean}
  */
 function regexCheck(regex) {
-  return check
+  return check;
 
   /**
    * Check whether a code matches the bound regex.
@@ -31672,11 +31912,10 @@ function regexCheck(regex) {
    *   Whether the character code matches the bound regex.
    */
   function check(code) {
-    return code !== null && code > -1 && regex.test(String.fromCharCode(code))
+    return code !== null && code > -1 && regex.test(String.fromCharCode(code));
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-factory-space/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-factory-space/index.js
 /**
  * @typedef {import('micromark-util-types').Effects} Effects
  * @typedef {import('micromark-util-types').State} State
@@ -31744,7 +31983,7 @@ function factorySpace(effects, ok, type, max) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/initialize/content.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/initialize/content.js
 /**
  * @typedef {import('micromark-util-types').InitialConstruct} InitialConstruct
  * @typedef {import('micromark-util-types').Initializer} Initializer
@@ -31825,7 +32064,7 @@ function initializeContent(effects) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/initialize/document.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/initialize/document.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').ContainerState} ContainerState
@@ -32209,7 +32448,7 @@ function tokenizeContainer(effects, ok, nok) {
   )
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/blank-line.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/blank-line.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -32223,14 +32462,14 @@ function tokenizeContainer(effects, ok, nok) {
 const blankLine = {
   tokenize: tokenizeBlankLine,
   partial: true
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeBlankLine(effects, ok, nok) {
-  return start
+  return start;
 
   /**
    * Start of blank line.
@@ -32247,9 +32486,7 @@ function tokenizeBlankLine(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    return markdownSpace(code)
-      ? factorySpace(effects, after, 'linePrefix')(code)
-      : after(code)
+    return markdownSpace(code) ? factorySpace(effects, after, "linePrefix")(code) : after(code);
   }
 
   /**
@@ -32267,11 +32504,10 @@ function tokenizeBlankLine(effects, ok, nok) {
    * @type {State}
    */
   function after(code) {
-    return code === null || markdownLineEnding(code) ? ok(code) : nok(code)
+    return code === null || markdownLineEnding(code) ? ok(code) : nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/content.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/content.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').Resolver} Resolver
@@ -32291,13 +32527,13 @@ function tokenizeBlankLine(effects, ok, nok) {
 const content_content = {
   tokenize: tokenizeContent,
   resolve: resolveContent
-}
+};
 
 /** @type {Construct} */
 const continuationConstruct = {
   tokenize: tokenizeContinuation,
   partial: true
-}
+};
 
 /**
  * Content is transparent: it’s parsed right now. That way, definitions are also
@@ -32306,8 +32542,8 @@ const continuationConstruct = {
  * @type {Resolver}
  */
 function resolveContent(events) {
-  subtokenize(events)
-  return events
+  subtokenize(events);
+  return events;
 }
 
 /**
@@ -32316,8 +32552,8 @@ function resolveContent(events) {
  */
 function tokenizeContent(effects, ok) {
   /** @type {Token | undefined} */
-  let previous
-  return chunkStart
+  let previous;
+  return chunkStart;
 
   /**
    * Before a content chunk.
@@ -32330,11 +32566,11 @@ function tokenizeContent(effects, ok) {
    * @type {State}
    */
   function chunkStart(code) {
-    effects.enter('content')
-    previous = effects.enter('chunkContent', {
-      contentType: 'content'
-    })
-    return chunkInside(code)
+    effects.enter("content");
+    previous = effects.enter("chunkContent", {
+      contentType: "content"
+    });
+    return chunkInside(code);
   }
 
   /**
@@ -32349,22 +32585,18 @@ function tokenizeContent(effects, ok) {
    */
   function chunkInside(code) {
     if (code === null) {
-      return contentEnd(code)
+      return contentEnd(code);
     }
 
     // To do: in `markdown-rs`, each line is parsed on its own, and everything
     // is stitched together resolving.
     if (markdownLineEnding(code)) {
-      return effects.check(
-        continuationConstruct,
-        contentContinue,
-        contentEnd
-      )(code)
+      return effects.check(continuationConstruct, contentContinue, contentEnd)(code);
     }
 
     // Data.
-    effects.consume(code)
-    return chunkInside
+    effects.consume(code);
+    return chunkInside;
   }
 
   /**
@@ -32373,9 +32605,9 @@ function tokenizeContent(effects, ok) {
    * @type {State}
    */
   function contentEnd(code) {
-    effects.exit('chunkContent')
-    effects.exit('content')
-    return ok(code)
+    effects.exit("chunkContent");
+    effects.exit("content");
+    return ok(code);
   }
 
   /**
@@ -32384,14 +32616,14 @@ function tokenizeContent(effects, ok) {
    * @type {State}
    */
   function contentContinue(code) {
-    effects.consume(code)
-    effects.exit('chunkContent')
-    previous.next = effects.enter('chunkContent', {
-      contentType: 'content',
+    effects.consume(code);
+    effects.exit("chunkContent");
+    previous.next = effects.enter("chunkContent", {
+      contentType: "content",
       previous
-    })
-    previous = previous.next
-    return chunkInside
+    });
+    previous = previous.next;
+    return chunkInside;
   }
 }
 
@@ -32400,8 +32632,8 @@ function tokenizeContent(effects, ok) {
  * @type {Tokenizer}
  */
 function tokenizeContinuation(effects, ok, nok) {
-  const self = this
-  return startLookahead
+  const self = this;
+  return startLookahead;
 
   /**
    *
@@ -32409,11 +32641,11 @@ function tokenizeContinuation(effects, ok, nok) {
    * @type {State}
    */
   function startLookahead(code) {
-    effects.exit('chunkContent')
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return factorySpace(effects, prefixed, 'linePrefix')
+    effects.exit("chunkContent");
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return factorySpace(effects, prefixed, "linePrefix");
   }
 
   /**
@@ -32423,25 +32655,19 @@ function tokenizeContinuation(effects, ok, nok) {
    */
   function prefixed(code) {
     if (code === null || markdownLineEnding(code)) {
-      return nok(code)
+      return nok(code);
     }
 
     // Always populated by defaults.
 
-    const tail = self.events[self.events.length - 1]
-    if (
-      !self.parser.constructs.disable.null.includes('codeIndented') &&
-      tail &&
-      tail[1].type === 'linePrefix' &&
-      tail[2].sliceSerialize(tail[1], true).length >= 4
-    ) {
-      return ok(code)
+    const tail = self.events[self.events.length - 1];
+    if (!self.parser.constructs.disable.null.includes('codeIndented') && tail && tail[1].type === "linePrefix" && tail[2].sliceSerialize(tail[1], true).length >= 4) {
+      return ok(code);
     }
-    return effects.interrupt(self.parser.constructs.flow, nok, ok)(code)
+    return effects.interrupt(self.parser.constructs.flow, nok, ok)(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/initialize/flow.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/initialize/flow.js
 /**
  * @typedef {import('micromark-util-types').InitialConstruct} InitialConstruct
  * @typedef {import('micromark-util-types').Initializer} Initializer
@@ -32511,7 +32737,7 @@ function initializeFlow(effects) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/initialize/text.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/initialize/text.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').InitialConstruct} InitialConstruct
@@ -32723,7 +32949,7 @@ function resolveAllLineSuffixes(events, context) {
   return events
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-resolve-all/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-resolve-all/index.js
 /**
  * @typedef {import('micromark-util-types').Event} Event
  * @typedef {import('micromark-util-types').Resolver} Resolver
@@ -32759,7 +32985,7 @@ function resolveAll(constructs, events, context) {
   return events
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/create-tokenizer.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/create-tokenizer.js
 /**
  * @typedef {import('micromark-util-types').Chunk} Chunk
  * @typedef {import('micromark-util-types').Code} Code
@@ -33343,7 +33569,7 @@ function serializeChunks(chunks, expandTabs) {
   return result.join('')
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/thematic-break.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/thematic-break.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -33358,17 +33584,17 @@ function serializeChunks(chunks, expandTabs) {
 const thematicBreak = {
   name: 'thematicBreak',
   tokenize: tokenizeThematicBreak
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeThematicBreak(effects, ok, nok) {
-  let size = 0
+  let size = 0;
   /** @type {NonNullable<Code>} */
-  let marker
-  return start
+  let marker;
+  return start;
 
   /**
    * Start of thematic break.
@@ -33381,9 +33607,9 @@ function tokenizeThematicBreak(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('thematicBreak')
+    effects.enter("thematicBreak");
     // To do: parse indent like `markdown-rs`.
-    return before(code)
+    return before(code);
   }
 
   /**
@@ -33397,8 +33623,8 @@ function tokenizeThematicBreak(effects, ok, nok) {
    * @type {State}
    */
   function before(code) {
-    marker = code
-    return atBreak(code)
+    marker = code;
+    return atBreak(code);
   }
 
   /**
@@ -33413,14 +33639,14 @@ function tokenizeThematicBreak(effects, ok, nok) {
    */
   function atBreak(code) {
     if (code === marker) {
-      effects.enter('thematicBreakSequence')
-      return sequence(code)
+      effects.enter("thematicBreakSequence");
+      return sequence(code);
     }
     if (size >= 3 && (code === null || markdownLineEnding(code))) {
-      effects.exit('thematicBreak')
-      return ok(code)
+      effects.exit("thematicBreak");
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -33435,18 +33661,15 @@ function tokenizeThematicBreak(effects, ok, nok) {
    */
   function sequence(code) {
     if (code === marker) {
-      effects.consume(code)
-      size++
-      return sequence
+      effects.consume(code);
+      size++;
+      return sequence;
     }
-    effects.exit('thematicBreakSequence')
-    return markdownSpace(code)
-      ? factorySpace(effects, atBreak, 'whitespace')(code)
-      : atBreak(code)
+    effects.exit("thematicBreakSequence");
+    return markdownSpace(code) ? factorySpace(effects, atBreak, "whitespace")(code) : atBreak(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/list.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/list.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -33470,19 +33693,19 @@ const list = {
     tokenize: tokenizeListContinuation
   },
   exit: tokenizeListEnd
-}
+};
 
 /** @type {Construct} */
 const listItemPrefixWhitespaceConstruct = {
   tokenize: tokenizeListItemPrefixWhitespace,
   partial: true
-}
+};
 
 /** @type {Construct} */
 const indentConstruct = {
   tokenize: tokenizeIndent,
   partial: true
-}
+};
 
 // To do: `markdown-rs` parses list items on their own and later stitches them
 // together.
@@ -33492,110 +33715,83 @@ const indentConstruct = {
  * @this {TokenizeContext}
  */
 function tokenizeListStart(effects, ok, nok) {
-  const self = this
-  const tail = self.events[self.events.length - 1]
-  let initialSize =
-    tail && tail[1].type === 'linePrefix'
-      ? tail[2].sliceSerialize(tail[1], true).length
-      : 0
-  let size = 0
-  return start
+  const self = this;
+  const tail = self.events[self.events.length - 1];
+  let initialSize = tail && tail[1].type === "linePrefix" ? tail[2].sliceSerialize(tail[1], true).length : 0;
+  let size = 0;
+  return start;
 
   /** @type {State} */
   function start(code) {
-    const kind =
-      self.containerState.type ||
-      (code === 42 || code === 43 || code === 45
-        ? 'listUnordered'
-        : 'listOrdered')
-    if (
-      kind === 'listUnordered'
-        ? !self.containerState.marker || code === self.containerState.marker
-        : asciiDigit(code)
-    ) {
+    const kind = self.containerState.type || (code === 42 || code === 43 || code === 45 ? "listUnordered" : "listOrdered");
+    if (kind === "listUnordered" ? !self.containerState.marker || code === self.containerState.marker : asciiDigit(code)) {
       if (!self.containerState.type) {
-        self.containerState.type = kind
+        self.containerState.type = kind;
         effects.enter(kind, {
           _container: true
-        })
+        });
       }
-      if (kind === 'listUnordered') {
-        effects.enter('listItemPrefix')
-        return code === 42 || code === 45
-          ? effects.check(thematicBreak, nok, atMarker)(code)
-          : atMarker(code)
+      if (kind === "listUnordered") {
+        effects.enter("listItemPrefix");
+        return code === 42 || code === 45 ? effects.check(thematicBreak, nok, atMarker)(code) : atMarker(code);
       }
       if (!self.interrupt || code === 49) {
-        effects.enter('listItemPrefix')
-        effects.enter('listItemValue')
-        return inside(code)
+        effects.enter("listItemPrefix");
+        effects.enter("listItemValue");
+        return inside(code);
       }
     }
-    return nok(code)
+    return nok(code);
   }
 
   /** @type {State} */
   function inside(code) {
     if (asciiDigit(code) && ++size < 10) {
-      effects.consume(code)
-      return inside
+      effects.consume(code);
+      return inside;
     }
-    if (
-      (!self.interrupt || size < 2) &&
-      (self.containerState.marker
-        ? code === self.containerState.marker
-        : code === 41 || code === 46)
-    ) {
-      effects.exit('listItemValue')
-      return atMarker(code)
+    if ((!self.interrupt || size < 2) && (self.containerState.marker ? code === self.containerState.marker : code === 41 || code === 46)) {
+      effects.exit("listItemValue");
+      return atMarker(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
    * @type {State}
    **/
   function atMarker(code) {
-    effects.enter('listItemMarker')
-    effects.consume(code)
-    effects.exit('listItemMarker')
-    self.containerState.marker = self.containerState.marker || code
-    return effects.check(
-      blankLine,
-      // Can’t be empty when interrupting.
-      self.interrupt ? nok : onBlank,
-      effects.attempt(
-        listItemPrefixWhitespaceConstruct,
-        endOfPrefix,
-        otherPrefix
-      )
-    )
+    effects.enter("listItemMarker");
+    effects.consume(code);
+    effects.exit("listItemMarker");
+    self.containerState.marker = self.containerState.marker || code;
+    return effects.check(blankLine,
+    // Can’t be empty when interrupting.
+    self.interrupt ? nok : onBlank, effects.attempt(listItemPrefixWhitespaceConstruct, endOfPrefix, otherPrefix));
   }
 
   /** @type {State} */
   function onBlank(code) {
-    self.containerState.initialBlankLine = true
-    initialSize++
-    return endOfPrefix(code)
+    self.containerState.initialBlankLine = true;
+    initialSize++;
+    return endOfPrefix(code);
   }
 
   /** @type {State} */
   function otherPrefix(code) {
     if (markdownSpace(code)) {
-      effects.enter('listItemPrefixWhitespace')
-      effects.consume(code)
-      effects.exit('listItemPrefixWhitespace')
-      return endOfPrefix
+      effects.enter("listItemPrefixWhitespace");
+      effects.consume(code);
+      effects.exit("listItemPrefixWhitespace");
+      return endOfPrefix;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /** @type {State} */
   function endOfPrefix(code) {
-    self.containerState.size =
-      initialSize +
-      self.sliceSerialize(effects.exit('listItemPrefix'), true).length
-    return ok(code)
+    self.containerState.size = initialSize + self.sliceSerialize(effects.exit("listItemPrefix"), true).length;
+    return ok(code);
   }
 }
 
@@ -33604,54 +33800,40 @@ function tokenizeListStart(effects, ok, nok) {
  * @this {TokenizeContext}
  */
 function tokenizeListContinuation(effects, ok, nok) {
-  const self = this
-  self.containerState._closeFlow = undefined
-  return effects.check(blankLine, onBlank, notBlank)
+  const self = this;
+  self.containerState._closeFlow = undefined;
+  return effects.check(blankLine, onBlank, notBlank);
 
   /** @type {State} */
   function onBlank(code) {
-    self.containerState.furtherBlankLines =
-      self.containerState.furtherBlankLines ||
-      self.containerState.initialBlankLine
+    self.containerState.furtherBlankLines = self.containerState.furtherBlankLines || self.containerState.initialBlankLine;
 
     // We have a blank line.
     // Still, try to consume at most the items size.
-    return factorySpace(
-      effects,
-      ok,
-      'listItemIndent',
-      self.containerState.size + 1
-    )(code)
+    return factorySpace(effects, ok, "listItemIndent", self.containerState.size + 1)(code);
   }
 
   /** @type {State} */
   function notBlank(code) {
     if (self.containerState.furtherBlankLines || !markdownSpace(code)) {
-      self.containerState.furtherBlankLines = undefined
-      self.containerState.initialBlankLine = undefined
-      return notInCurrentItem(code)
+      self.containerState.furtherBlankLines = undefined;
+      self.containerState.initialBlankLine = undefined;
+      return notInCurrentItem(code);
     }
-    self.containerState.furtherBlankLines = undefined
-    self.containerState.initialBlankLine = undefined
-    return effects.attempt(indentConstruct, ok, notInCurrentItem)(code)
+    self.containerState.furtherBlankLines = undefined;
+    self.containerState.initialBlankLine = undefined;
+    return effects.attempt(indentConstruct, ok, notInCurrentItem)(code);
   }
 
   /** @type {State} */
   function notInCurrentItem(code) {
     // While we do continue, we signal that the flow should be closed.
-    self.containerState._closeFlow = true
+    self.containerState._closeFlow = true;
     // As we’re closing flow, we’re no longer interrupting.
-    self.interrupt = undefined
+    self.interrupt = undefined;
     // Always populated by defaults.
 
-    return factorySpace(
-      effects,
-      effects.attempt(list, ok, nok),
-      'linePrefix',
-      self.parser.constructs.disable.null.includes('codeIndented')
-        ? undefined
-        : 4
-    )(code)
+    return factorySpace(effects, effects.attempt(list, ok, nok), "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code);
   }
 }
 
@@ -33660,22 +33842,13 @@ function tokenizeListContinuation(effects, ok, nok) {
  * @this {TokenizeContext}
  */
 function tokenizeIndent(effects, ok, nok) {
-  const self = this
-  return factorySpace(
-    effects,
-    afterPrefix,
-    'listItemIndent',
-    self.containerState.size + 1
-  )
+  const self = this;
+  return factorySpace(effects, afterPrefix, "listItemIndent", self.containerState.size + 1);
 
   /** @type {State} */
   function afterPrefix(code) {
-    const tail = self.events[self.events.length - 1]
-    return tail &&
-      tail[1].type === 'listItemIndent' &&
-      tail[2].sliceSerialize(tail[1], true).length === self.containerState.size
-      ? ok(code)
-      : nok(code)
+    const tail = self.events[self.events.length - 1];
+    return tail && tail[1].type === "listItemIndent" && tail[2].sliceSerialize(tail[1], true).length === self.containerState.size ? ok(code) : nok(code);
   }
 }
 
@@ -33684,7 +33857,7 @@ function tokenizeIndent(effects, ok, nok) {
  * @this {TokenizeContext}
  */
 function tokenizeListEnd(effects) {
-  effects.exit(this.containerState.type)
+  effects.exit(this.containerState.type);
 }
 
 /**
@@ -33692,31 +33865,19 @@ function tokenizeListEnd(effects) {
  * @this {TokenizeContext}
  */
 function tokenizeListItemPrefixWhitespace(effects, ok, nok) {
-  const self = this
+  const self = this;
 
   // Always populated by defaults.
 
-  return factorySpace(
-    effects,
-    afterPrefix,
-    'listItemPrefixWhitespace',
-    self.parser.constructs.disable.null.includes('codeIndented')
-      ? undefined
-      : 4 + 1
-  )
+  return factorySpace(effects, afterPrefix, "listItemPrefixWhitespace", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4 + 1);
 
   /** @type {State} */
   function afterPrefix(code) {
-    const tail = self.events[self.events.length - 1]
-    return !markdownSpace(code) &&
-      tail &&
-      tail[1].type === 'listItemPrefixWhitespace'
-      ? ok(code)
-      : nok(code)
+    const tail = self.events[self.events.length - 1];
+    return !markdownSpace(code) && tail && tail[1].type === "listItemPrefixWhitespace" ? ok(code) : nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/block-quote.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/block-quote.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').Exiter} Exiter
@@ -33735,15 +33896,15 @@ const blockQuote = {
     tokenize: tokenizeBlockQuoteContinuation
   },
   exit
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeBlockQuoteStart(effects, ok, nok) {
-  const self = this
-  return start
+  const self = this;
+  return start;
 
   /**
    * Start of block quote.
@@ -33757,20 +33918,20 @@ function tokenizeBlockQuoteStart(effects, ok, nok) {
    */
   function start(code) {
     if (code === 62) {
-      const state = self.containerState
+      const state = self.containerState;
       if (!state.open) {
-        effects.enter('blockQuote', {
+        effects.enter("blockQuote", {
           _container: true
-        })
-        state.open = true
+        });
+        state.open = true;
       }
-      effects.enter('blockQuotePrefix')
-      effects.enter('blockQuoteMarker')
-      effects.consume(code)
-      effects.exit('blockQuoteMarker')
-      return after
+      effects.enter("blockQuotePrefix");
+      effects.enter("blockQuoteMarker");
+      effects.consume(code);
+      effects.exit("blockQuoteMarker");
+      return after;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -33785,14 +33946,14 @@ function tokenizeBlockQuoteStart(effects, ok, nok) {
    */
   function after(code) {
     if (markdownSpace(code)) {
-      effects.enter('blockQuotePrefixWhitespace')
-      effects.consume(code)
-      effects.exit('blockQuotePrefixWhitespace')
-      effects.exit('blockQuotePrefix')
-      return ok
+      effects.enter("blockQuotePrefixWhitespace");
+      effects.consume(code);
+      effects.exit("blockQuotePrefixWhitespace");
+      effects.exit("blockQuotePrefix");
+      return ok;
     }
-    effects.exit('blockQuotePrefix')
-    return ok(code)
+    effects.exit("blockQuotePrefix");
+    return ok(code);
   }
 }
 
@@ -33809,8 +33970,8 @@ function tokenizeBlockQuoteStart(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeBlockQuoteContinuation(effects, ok, nok) {
-  const self = this
-  return contStart
+  const self = this;
+  return contStart;
 
   /**
    * Start of block quote continuation.
@@ -33829,16 +33990,9 @@ function tokenizeBlockQuoteContinuation(effects, ok, nok) {
     if (markdownSpace(code)) {
       // Always populated by defaults.
 
-      return factorySpace(
-        effects,
-        contBefore,
-        'linePrefix',
-        self.parser.constructs.disable.null.includes('codeIndented')
-          ? undefined
-          : 4
-      )(code)
+      return factorySpace(effects, contBefore, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code);
     }
-    return contBefore(code)
+    return contBefore(code);
   }
 
   /**
@@ -33855,16 +34009,15 @@ function tokenizeBlockQuoteContinuation(effects, ok, nok) {
    * @type {State}
    */
   function contBefore(code) {
-    return effects.attempt(blockQuote, ok, nok)(code)
+    return effects.attempt(blockQuote, ok, nok)(code);
   }
 }
 
 /** @type {Exiter} */
 function exit(effects) {
-  effects.exit('blockQuote')
+  effects.exit("blockQuote");
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-factory-destination/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-factory-destination/index.js
 /**
  * @typedef {import('micromark-util-types').Effects} Effects
  * @typedef {import('micromark-util-types').State} State
@@ -34087,7 +34240,7 @@ function factoryDestination(
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-factory-label/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-factory-label/index.js
 /**
  * @typedef {import('micromark-util-types').Effects} Effects
  * @typedef {import('micromark-util-types').State} State
@@ -34248,7 +34401,7 @@ function factoryLabel(effects, ok, nok, type, markerType, stringType) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-factory-title/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-factory-title/index.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Effects} Effects
@@ -34406,7 +34559,7 @@ function factoryTitle(effects, ok, nok, type, markerType, stringType) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-factory-whitespace/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-factory-whitespace/index.js
 /**
  * @typedef {import('micromark-util-types').Effects} Effects
  * @typedef {import('micromark-util-types').State} State
@@ -34457,7 +34610,7 @@ function factoryWhitespace(effects, ok) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-normalize-identifier/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-normalize-identifier/index.js
 /**
  * Normalize an identifier (as found in references, definitions).
  *
@@ -34495,7 +34648,7 @@ function normalizeIdentifier(value) {
   )
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/definition.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/definition.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -34514,23 +34667,23 @@ function normalizeIdentifier(value) {
 const definition = {
   name: 'definition',
   tokenize: tokenizeDefinition
-}
+};
 
 /** @type {Construct} */
 const titleBefore = {
   tokenize: tokenizeTitleBefore,
   partial: true
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeDefinition(effects, ok, nok) {
-  const self = this
+  const self = this;
   /** @type {string} */
-  let identifier
-  return start
+  let identifier;
+  return start;
 
   /**
    * At start of a definition.
@@ -34546,8 +34699,8 @@ function tokenizeDefinition(effects, ok, nok) {
     // Do not interrupt paragraphs (but do follow definitions).
     // To do: do `interrupt` the way `markdown-rs` does.
     // To do: parse whitespace the way `markdown-rs` does.
-    effects.enter('definition')
-    return before(code)
+    effects.enter("definition");
+    return before(code);
   }
 
   /**
@@ -34563,16 +34716,9 @@ function tokenizeDefinition(effects, ok, nok) {
   function before(code) {
     // To do: parse whitespace the way `markdown-rs` does.
 
-    return factoryLabel.call(
-      self,
-      effects,
-      labelAfter,
-      // Note: we don’t need to reset the way `markdown-rs` does.
-      nok,
-      'definitionLabel',
-      'definitionLabelMarker',
-      'definitionLabelString'
-    )(code)
+    return factoryLabel.call(self, effects, labelAfter,
+    // Note: we don’t need to reset the way `markdown-rs` does.
+    nok, "definitionLabel", "definitionLabelMarker", "definitionLabelString")(code);
   }
 
   /**
@@ -34586,16 +34732,14 @@ function tokenizeDefinition(effects, ok, nok) {
    * @type {State}
    */
   function labelAfter(code) {
-    identifier = normalizeIdentifier(
-      self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1)
-    )
+    identifier = normalizeIdentifier(self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1));
     if (code === 58) {
-      effects.enter('definitionMarker')
-      effects.consume(code)
-      effects.exit('definitionMarker')
-      return markerAfter
+      effects.enter("definitionMarker");
+      effects.consume(code);
+      effects.exit("definitionMarker");
+      return markerAfter;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -34610,9 +34754,7 @@ function tokenizeDefinition(effects, ok, nok) {
    */
   function markerAfter(code) {
     // Note: whitespace is optional.
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, destinationBefore)(code)
-      : destinationBefore(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, destinationBefore)(code) : destinationBefore(code);
   }
 
   /**
@@ -34626,17 +34768,9 @@ function tokenizeDefinition(effects, ok, nok) {
    * @type {State}
    */
   function destinationBefore(code) {
-    return factoryDestination(
-      effects,
-      destinationAfter,
-      // Note: we don’t need to reset the way `markdown-rs` does.
-      nok,
-      'definitionDestination',
-      'definitionDestinationLiteral',
-      'definitionDestinationLiteralMarker',
-      'definitionDestinationRaw',
-      'definitionDestinationString'
-    )(code)
+    return factoryDestination(effects, destinationAfter,
+    // Note: we don’t need to reset the way `markdown-rs` does.
+    nok, "definitionDestination", "definitionDestinationLiteral", "definitionDestinationLiteralMarker", "definitionDestinationRaw", "definitionDestinationString")(code);
   }
 
   /**
@@ -34650,7 +34784,7 @@ function tokenizeDefinition(effects, ok, nok) {
    * @type {State}
    */
   function destinationAfter(code) {
-    return effects.attempt(titleBefore, after, after)(code)
+    return effects.attempt(titleBefore, after, after)(code);
   }
 
   /**
@@ -34666,9 +34800,7 @@ function tokenizeDefinition(effects, ok, nok) {
    * @type {State}
    */
   function after(code) {
-    return markdownSpace(code)
-      ? factorySpace(effects, afterWhitespace, 'whitespace')(code)
-      : afterWhitespace(code)
+    return markdownSpace(code) ? factorySpace(effects, afterWhitespace, "whitespace")(code) : afterWhitespace(code);
   }
 
   /**
@@ -34685,19 +34817,19 @@ function tokenizeDefinition(effects, ok, nok) {
    */
   function afterWhitespace(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('definition')
+      effects.exit("definition");
 
       // Note: we don’t care about uniqueness.
       // It’s likely that that doesn’t happen very frequently.
       // It is more likely that it wastes precious time.
-      self.parser.defined.push(identifier)
+      self.parser.defined.push(identifier);
 
       // To do: `markdown-rs` interrupt.
       // // You’d be interrupting.
       // tokenizer.interrupt = true
-      return ok(code)
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -34706,7 +34838,7 @@ function tokenizeDefinition(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeTitleBefore(effects, ok, nok) {
-  return titleBefore
+  return titleBefore;
 
   /**
    * After destination, at whitespace.
@@ -34721,9 +34853,7 @@ function tokenizeTitleBefore(effects, ok, nok) {
    * @type {State}
    */
   function titleBefore(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, beforeMarker)(code)
-      : nok(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, beforeMarker)(code) : nok(code);
   }
 
   /**
@@ -34738,14 +34868,7 @@ function tokenizeTitleBefore(effects, ok, nok) {
    * @type {State}
    */
   function beforeMarker(code) {
-    return factoryTitle(
-      effects,
-      titleAfter,
-      nok,
-      'definitionTitle',
-      'definitionTitleMarker',
-      'definitionTitleString'
-    )(code)
+    return factoryTitle(effects, titleAfter, nok, "definitionTitle", "definitionTitleMarker", "definitionTitleString")(code);
   }
 
   /**
@@ -34759,9 +34882,7 @@ function tokenizeTitleBefore(effects, ok, nok) {
    * @type {State}
    */
   function titleAfter(code) {
-    return markdownSpace(code)
-      ? factorySpace(effects, titleAfterOptionalWhitespace, 'whitespace')(code)
-      : titleAfterOptionalWhitespace(code)
+    return markdownSpace(code) ? factorySpace(effects, titleAfterOptionalWhitespace, "whitespace")(code) : titleAfterOptionalWhitespace(code);
   }
 
   /**
@@ -34775,11 +34896,10 @@ function tokenizeTitleBefore(effects, ok, nok) {
    * @type {State}
    */
   function titleAfterOptionalWhitespace(code) {
-    return code === null || markdownLineEnding(code) ? ok(code) : nok(code)
+    return code === null || markdownLineEnding(code) ? ok(code) : nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/code-indented.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/code-indented.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -34793,21 +34913,21 @@ function tokenizeTitleBefore(effects, ok, nok) {
 const codeIndented = {
   name: 'codeIndented',
   tokenize: tokenizeCodeIndented
-}
+};
 
 /** @type {Construct} */
 const furtherStart = {
   tokenize: tokenizeFurtherStart,
   partial: true
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeCodeIndented(effects, ok, nok) {
-  const self = this
-  return start
+  const self = this;
+  return start;
 
   /**
    * Start of code (indented).
@@ -34826,10 +34946,10 @@ function tokenizeCodeIndented(effects, ok, nok) {
   function start(code) {
     // To do: manually check if interrupting like `markdown-rs`.
 
-    effects.enter('codeIndented')
+    effects.enter("codeIndented");
     // To do: use an improved `space_or_tab` function like `markdown-rs`,
     // so that we can drop the next state.
-    return factorySpace(effects, afterPrefix, 'linePrefix', 4 + 1)(code)
+    return factorySpace(effects, afterPrefix, "linePrefix", 4 + 1)(code);
   }
 
   /**
@@ -34843,12 +34963,8 @@ function tokenizeCodeIndented(effects, ok, nok) {
    * @type {State}
    */
   function afterPrefix(code) {
-    const tail = self.events[self.events.length - 1]
-    return tail &&
-      tail[1].type === 'linePrefix' &&
-      tail[2].sliceSerialize(tail[1], true).length >= 4
-      ? atBreak(code)
-      : nok(code)
+    const tail = self.events[self.events.length - 1];
+    return tail && tail[1].type === "linePrefix" && tail[2].sliceSerialize(tail[1], true).length >= 4 ? atBreak(code) : nok(code);
   }
 
   /**
@@ -34863,13 +34979,13 @@ function tokenizeCodeIndented(effects, ok, nok) {
    */
   function atBreak(code) {
     if (code === null) {
-      return after(code)
+      return after(code);
     }
     if (markdownLineEnding(code)) {
-      return effects.attempt(furtherStart, atBreak, after)(code)
+      return effects.attempt(furtherStart, atBreak, after)(code);
     }
-    effects.enter('codeFlowValue')
-    return inside(code)
+    effects.enter("codeFlowValue");
+    return inside(code);
   }
 
   /**
@@ -34884,20 +35000,20 @@ function tokenizeCodeIndented(effects, ok, nok) {
    */
   function inside(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('codeFlowValue')
-      return atBreak(code)
+      effects.exit("codeFlowValue");
+      return atBreak(code);
     }
-    effects.consume(code)
-    return inside
+    effects.consume(code);
+    return inside;
   }
 
   /** @type {State} */
   function after(code) {
-    effects.exit('codeIndented')
+    effects.exit("codeIndented");
     // To do: allow interrupting like `markdown-rs`.
     // Feel free to interrupt.
     // tokenizer.interrupt = false
-    return ok(code)
+    return ok(code);
   }
 }
 
@@ -34906,8 +35022,8 @@ function tokenizeCodeIndented(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeFurtherStart(effects, ok, nok) {
-  const self = this
-  return furtherStart
+  const self = this;
+  return furtherStart;
 
   /**
    * At eol, trying to parse another indent.
@@ -34924,13 +35040,13 @@ function tokenizeFurtherStart(effects, ok, nok) {
     // To do: improve `lazy` / `pierce` handling.
     // If this is a lazy line, it can’t be code.
     if (self.parser.lazy[self.now().line]) {
-      return nok(code)
+      return nok(code);
     }
     if (markdownLineEnding(code)) {
-      effects.enter('lineEnding')
-      effects.consume(code)
-      effects.exit('lineEnding')
-      return furtherStart
+      effects.enter("lineEnding");
+      effects.consume(code);
+      effects.exit("lineEnding");
+      return furtherStart;
     }
 
     // To do: the code here in `micromark-js` is a bit different from
@@ -34939,7 +35055,7 @@ function tokenizeFurtherStart(effects, ok, nok) {
     //
     // To do: use an improved `space_or_tab` function like `markdown-rs`,
     // so that we can drop the next state.
-    return factorySpace(effects, afterPrefix, 'linePrefix', 4 + 1)(code)
+    return factorySpace(effects, afterPrefix, "linePrefix", 4 + 1)(code);
   }
 
   /**
@@ -34953,18 +35069,11 @@ function tokenizeFurtherStart(effects, ok, nok) {
    * @type {State}
    */
   function afterPrefix(code) {
-    const tail = self.events[self.events.length - 1]
-    return tail &&
-      tail[1].type === 'linePrefix' &&
-      tail[2].sliceSerialize(tail[1], true).length >= 4
-      ? ok(code)
-      : markdownLineEnding(code)
-      ? furtherStart(code)
-      : nok(code)
+    const tail = self.events[self.events.length - 1];
+    return tail && tail[1].type === "linePrefix" && tail[2].sliceSerialize(tail[1], true).length >= 4 ? ok(code) : markdownLineEnding(code) ? furtherStart(code) : nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/heading-atx.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/heading-atx.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').Resolver} Resolver
@@ -34982,57 +35091,44 @@ const headingAtx = {
   name: 'headingAtx',
   tokenize: tokenizeHeadingAtx,
   resolve: resolveHeadingAtx
-}
+};
 
 /** @type {Resolver} */
 function resolveHeadingAtx(events, context) {
-  let contentEnd = events.length - 2
-  let contentStart = 3
+  let contentEnd = events.length - 2;
+  let contentStart = 3;
   /** @type {Token} */
-  let content
+  let content;
   /** @type {Token} */
-  let text
+  let text;
 
   // Prefix whitespace, part of the opening.
-  if (events[contentStart][1].type === 'whitespace') {
-    contentStart += 2
+  if (events[contentStart][1].type === "whitespace") {
+    contentStart += 2;
   }
 
   // Suffix whitespace, part of the closing.
-  if (
-    contentEnd - 2 > contentStart &&
-    events[contentEnd][1].type === 'whitespace'
-  ) {
-    contentEnd -= 2
+  if (contentEnd - 2 > contentStart && events[contentEnd][1].type === "whitespace") {
+    contentEnd -= 2;
   }
-  if (
-    events[contentEnd][1].type === 'atxHeadingSequence' &&
-    (contentStart === contentEnd - 1 ||
-      (contentEnd - 4 > contentStart &&
-        events[contentEnd - 2][1].type === 'whitespace'))
-  ) {
-    contentEnd -= contentStart + 1 === contentEnd ? 2 : 4
+  if (events[contentEnd][1].type === "atxHeadingSequence" && (contentStart === contentEnd - 1 || contentEnd - 4 > contentStart && events[contentEnd - 2][1].type === "whitespace")) {
+    contentEnd -= contentStart + 1 === contentEnd ? 2 : 4;
   }
   if (contentEnd > contentStart) {
     content = {
-      type: 'atxHeadingText',
+      type: "atxHeadingText",
       start: events[contentStart][1].start,
       end: events[contentEnd][1].end
-    }
+    };
     text = {
-      type: 'chunkText',
+      type: "chunkText",
       start: events[contentStart][1].start,
       end: events[contentEnd][1].end,
-      contentType: 'text'
-    }
-    splice(events, contentStart, contentEnd - contentStart + 1, [
-      ['enter', content, context],
-      ['enter', text, context],
-      ['exit', text, context],
-      ['exit', content, context]
-    ])
+      contentType: "text"
+    };
+    splice(events, contentStart, contentEnd - contentStart + 1, [['enter', content, context], ['enter', text, context], ['exit', text, context], ['exit', content, context]]);
   }
-  return events
+  return events;
 }
 
 /**
@@ -35040,8 +35136,8 @@ function resolveHeadingAtx(events, context) {
  * @type {Tokenizer}
  */
 function tokenizeHeadingAtx(effects, ok, nok) {
-  let size = 0
-  return start
+  let size = 0;
+  return start;
 
   /**
    * Start of a heading (atx).
@@ -35055,8 +35151,8 @@ function tokenizeHeadingAtx(effects, ok, nok) {
    */
   function start(code) {
     // To do: parse indent like `markdown-rs`.
-    effects.enter('atxHeading')
-    return before(code)
+    effects.enter("atxHeading");
+    return before(code);
   }
 
   /**
@@ -35070,8 +35166,8 @@ function tokenizeHeadingAtx(effects, ok, nok) {
    * @type {State}
    */
   function before(code) {
-    effects.enter('atxHeadingSequence')
-    return sequenceOpen(code)
+    effects.enter("atxHeadingSequence");
+    return sequenceOpen(code);
   }
 
   /**
@@ -35086,16 +35182,16 @@ function tokenizeHeadingAtx(effects, ok, nok) {
    */
   function sequenceOpen(code) {
     if (code === 35 && size++ < 6) {
-      effects.consume(code)
-      return sequenceOpen
+      effects.consume(code);
+      return sequenceOpen;
     }
 
     // Always at least one `#`.
     if (code === null || markdownLineEndingOrSpace(code)) {
-      effects.exit('atxHeadingSequence')
-      return atBreak(code)
+      effects.exit("atxHeadingSequence");
+      return atBreak(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35110,24 +35206,24 @@ function tokenizeHeadingAtx(effects, ok, nok) {
    */
   function atBreak(code) {
     if (code === 35) {
-      effects.enter('atxHeadingSequence')
-      return sequenceFurther(code)
+      effects.enter("atxHeadingSequence");
+      return sequenceFurther(code);
     }
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('atxHeading')
+      effects.exit("atxHeading");
       // To do: interrupt like `markdown-rs`.
       // // Feel free to interrupt.
       // tokenizer.interrupt = false
-      return ok(code)
+      return ok(code);
     }
     if (markdownSpace(code)) {
-      return factorySpace(effects, atBreak, 'whitespace')(code)
+      return factorySpace(effects, atBreak, "whitespace")(code);
     }
 
     // To do: generate `data` tokens, add the `text` token later.
     // Needs edit map, see: `markdown.rs`.
-    effects.enter('atxHeadingText')
-    return data(code)
+    effects.enter("atxHeadingText");
+    return data(code);
   }
 
   /**
@@ -35144,11 +35240,11 @@ function tokenizeHeadingAtx(effects, ok, nok) {
    */
   function sequenceFurther(code) {
     if (code === 35) {
-      effects.consume(code)
-      return sequenceFurther
+      effects.consume(code);
+      return sequenceFurther;
     }
-    effects.exit('atxHeadingSequence')
-    return atBreak(code)
+    effects.exit("atxHeadingSequence");
+    return atBreak(code);
   }
 
   /**
@@ -35163,15 +35259,14 @@ function tokenizeHeadingAtx(effects, ok, nok) {
    */
   function data(code) {
     if (code === null || code === 35 || markdownLineEndingOrSpace(code)) {
-      effects.exit('atxHeadingText')
-      return atBreak(code)
+      effects.exit("atxHeadingText");
+      return atBreak(code);
     }
-    effects.consume(code)
-    return data
+    effects.consume(code);
+    return data;
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/setext-underline.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/setext-underline.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -35188,64 +35283,64 @@ const setextUnderline = {
   name: 'setextUnderline',
   tokenize: tokenizeSetextUnderline,
   resolveTo: resolveToSetextUnderline
-}
+};
 
 /** @type {Resolver} */
 function resolveToSetextUnderline(events, context) {
   // To do: resolve like `markdown-rs`.
-  let index = events.length
+  let index = events.length;
   /** @type {number | undefined} */
-  let content
+  let content;
   /** @type {number | undefined} */
-  let text
+  let text;
   /** @type {number | undefined} */
-  let definition
+  let definition;
 
   // Find the opening of the content.
   // It’ll always exist: we don’t tokenize if it isn’t there.
   while (index--) {
     if (events[index][0] === 'enter') {
-      if (events[index][1].type === 'content') {
-        content = index
-        break
+      if (events[index][1].type === "content") {
+        content = index;
+        break;
       }
-      if (events[index][1].type === 'paragraph') {
-        text = index
+      if (events[index][1].type === "paragraph") {
+        text = index;
       }
     }
     // Exit
     else {
-      if (events[index][1].type === 'content') {
+      if (events[index][1].type === "content") {
         // Remove the content end (if needed we’ll add it later)
-        events.splice(index, 1)
+        events.splice(index, 1);
       }
-      if (!definition && events[index][1].type === 'definition') {
-        definition = index
+      if (!definition && events[index][1].type === "definition") {
+        definition = index;
       }
     }
   }
   const heading = {
-    type: 'setextHeading',
+    type: "setextHeading",
     start: Object.assign({}, events[text][1].start),
     end: Object.assign({}, events[events.length - 1][1].end)
-  }
+  };
 
   // Change the paragraph to setext heading text.
-  events[text][1].type = 'setextHeadingText'
+  events[text][1].type = "setextHeadingText";
 
   // If we have definitions in the content, we’ll keep on having content,
   // but we need move it.
   if (definition) {
-    events.splice(text, 0, ['enter', heading, context])
-    events.splice(definition + 1, 0, ['exit', events[content][1], context])
-    events[content][1].end = Object.assign({}, events[definition][1].end)
+    events.splice(text, 0, ['enter', heading, context]);
+    events.splice(definition + 1, 0, ['exit', events[content][1], context]);
+    events[content][1].end = Object.assign({}, events[definition][1].end);
   } else {
-    events[content][1] = heading
+    events[content][1] = heading;
   }
 
   // Add the heading exit at the end.
-  events.push(['exit', heading, context])
-  return events
+  events.push(['exit', heading, context]);
+  return events;
 }
 
 /**
@@ -35253,10 +35348,10 @@ function resolveToSetextUnderline(events, context) {
  * @type {Tokenizer}
  */
 function tokenizeSetextUnderline(effects, ok, nok) {
-  const self = this
+  const self = this;
   /** @type {NonNullable<Code>} */
-  let marker
-  return start
+  let marker;
+  return start;
 
   /**
    * At start of heading (setext) underline.
@@ -35270,31 +35365,27 @@ function tokenizeSetextUnderline(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    let index = self.events.length
+    let index = self.events.length;
     /** @type {boolean | undefined} */
-    let paragraph
+    let paragraph;
     // Find an opening.
     while (index--) {
       // Skip enter/exit of line ending, line prefix, and content.
       // We can now either have a definition or a paragraph.
-      if (
-        self.events[index][1].type !== 'lineEnding' &&
-        self.events[index][1].type !== 'linePrefix' &&
-        self.events[index][1].type !== 'content'
-      ) {
-        paragraph = self.events[index][1].type === 'paragraph'
-        break
+      if (self.events[index][1].type !== "lineEnding" && self.events[index][1].type !== "linePrefix" && self.events[index][1].type !== "content") {
+        paragraph = self.events[index][1].type === "paragraph";
+        break;
       }
     }
 
     // To do: handle lazy/pierce like `markdown-rs`.
     // To do: parse indent like `markdown-rs`.
     if (!self.parser.lazy[self.now().line] && (self.interrupt || paragraph)) {
-      effects.enter('setextHeadingLine')
-      marker = code
-      return before(code)
+      effects.enter("setextHeadingLine");
+      marker = code;
+      return before(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35309,8 +35400,8 @@ function tokenizeSetextUnderline(effects, ok, nok) {
    * @type {State}
    */
   function before(code) {
-    effects.enter('setextHeadingLineSequence')
-    return inside(code)
+    effects.enter("setextHeadingLineSequence");
+    return inside(code);
   }
 
   /**
@@ -35326,13 +35417,11 @@ function tokenizeSetextUnderline(effects, ok, nok) {
    */
   function inside(code) {
     if (code === marker) {
-      effects.consume(code)
-      return inside
+      effects.consume(code);
+      return inside;
     }
-    effects.exit('setextHeadingLineSequence')
-    return markdownSpace(code)
-      ? factorySpace(effects, after, 'lineSuffix')(code)
-      : after(code)
+    effects.exit("setextHeadingLineSequence");
+    return markdownSpace(code) ? factorySpace(effects, after, "lineSuffix")(code) : after(code);
   }
 
   /**
@@ -35348,14 +35437,13 @@ function tokenizeSetextUnderline(effects, ok, nok) {
    */
   function after(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('setextHeadingLine')
-      return ok(code)
+      effects.exit("setextHeadingLine");
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-html-tag-name/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-html-tag-name/index.js
 /**
  * List of lowercase HTML “block” tag names.
  *
@@ -35450,7 +35538,7 @@ const htmlBlockNames = [
  */
 const htmlRawNames = ['pre', 'script', 'style', 'textarea']
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/html-flow.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/html-flow.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -35470,35 +35558,35 @@ const htmlFlow = {
   tokenize: tokenizeHtmlFlow,
   resolveTo: resolveToHtmlFlow,
   concrete: true
-}
+};
 
 /** @type {Construct} */
 const blankLineBefore = {
   tokenize: tokenizeBlankLineBefore,
   partial: true
-}
+};
 const nonLazyContinuationStart = {
   tokenize: tokenizeNonLazyContinuationStart,
   partial: true
-}
+};
 
 /** @type {Resolver} */
 function resolveToHtmlFlow(events) {
-  let index = events.length
+  let index = events.length;
   while (index--) {
-    if (events[index][0] === 'enter' && events[index][1].type === 'htmlFlow') {
-      break
+    if (events[index][0] === 'enter' && events[index][1].type === "htmlFlow") {
+      break;
     }
   }
-  if (index > 1 && events[index - 2][1].type === 'linePrefix') {
+  if (index > 1 && events[index - 2][1].type === "linePrefix") {
     // Add the prefix start to the HTML token.
-    events[index][1].start = events[index - 2][1].start
+    events[index][1].start = events[index - 2][1].start;
     // Add the prefix start to the HTML line token.
-    events[index + 1][1].start = events[index - 2][1].start
+    events[index + 1][1].start = events[index - 2][1].start;
     // Remove the line prefix.
-    events.splice(index - 2, 2)
+    events.splice(index - 2, 2);
   }
-  return events
+  return events;
 }
 
 /**
@@ -35506,18 +35594,18 @@ function resolveToHtmlFlow(events) {
  * @type {Tokenizer}
  */
 function tokenizeHtmlFlow(effects, ok, nok) {
-  const self = this
+  const self = this;
   /** @type {number} */
-  let marker
+  let marker;
   /** @type {boolean} */
-  let closingTag
+  let closingTag;
   /** @type {string} */
-  let buffer
+  let buffer;
   /** @type {number} */
-  let index
+  let index;
   /** @type {Code} */
-  let markerB
-  return start
+  let markerB;
+  return start;
 
   /**
    * Start of HTML (flow).
@@ -35531,7 +35619,7 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function start(code) {
     // To do: parse indent like `markdown-rs`.
-    return before(code)
+    return before(code);
   }
 
   /**
@@ -35545,10 +35633,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function before(code) {
-    effects.enter('htmlFlow')
-    effects.enter('htmlFlowData')
-    effects.consume(code)
-    return open
+    effects.enter("htmlFlow");
+    effects.enter("htmlFlowData");
+    effects.consume(code);
+    return open;
   }
 
   /**
@@ -35567,33 +35655,33 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function open(code) {
     if (code === 33) {
-      effects.consume(code)
-      return declarationOpen
+      effects.consume(code);
+      return declarationOpen;
     }
     if (code === 47) {
-      effects.consume(code)
-      closingTag = true
-      return tagCloseStart
+      effects.consume(code);
+      closingTag = true;
+      return tagCloseStart;
     }
     if (code === 63) {
-      effects.consume(code)
-      marker = 3
+      effects.consume(code);
+      marker = 3;
       // To do:
       // tokenizer.concrete = true
       // To do: use `markdown-rs` style interrupt.
       // While we’re in an instruction instead of a declaration, we’re on a `?`
       // right now, so we do need to search for `>`, similar to declarations.
-      return self.interrupt ? ok : continuationDeclarationInside
+      return self.interrupt ? ok : continuationDeclarationInside;
     }
 
     // ASCII alphabetical.
     if (asciiAlpha(code)) {
-      effects.consume(code)
+      effects.consume(code);
       // @ts-expect-error: not null.
-      buffer = String.fromCharCode(code)
-      return tagName
+      buffer = String.fromCharCode(code);
+      return tagName;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35612,26 +35700,26 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function declarationOpen(code) {
     if (code === 45) {
-      effects.consume(code)
-      marker = 2
-      return commentOpenInside
+      effects.consume(code);
+      marker = 2;
+      return commentOpenInside;
     }
     if (code === 91) {
-      effects.consume(code)
-      marker = 5
-      index = 0
-      return cdataOpenInside
+      effects.consume(code);
+      marker = 5;
+      index = 0;
+      return cdataOpenInside;
     }
 
     // ASCII alphabetical.
     if (asciiAlpha(code)) {
-      effects.consume(code)
-      marker = 4
+      effects.consume(code);
+      marker = 4;
       // // Do not form containers.
       // tokenizer.concrete = true
-      return self.interrupt ? ok : continuationDeclarationInside
+      return self.interrupt ? ok : continuationDeclarationInside;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35646,12 +35734,12 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function commentOpenInside(code) {
     if (code === 45) {
-      effects.consume(code)
+      effects.consume(code);
       // // Do not form containers.
       // tokenizer.concrete = true
-      return self.interrupt ? ok : continuationDeclarationInside
+      return self.interrupt ? ok : continuationDeclarationInside;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35665,17 +35753,17 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function cdataOpenInside(code) {
-    const value = 'CDATA['
+    const value = "CDATA[";
     if (code === value.charCodeAt(index++)) {
-      effects.consume(code)
+      effects.consume(code);
       if (index === value.length) {
         // // Do not form containers.
         // tokenizer.concrete = true
-        return self.interrupt ? ok : continuation
+        return self.interrupt ? ok : continuation;
       }
-      return cdataOpenInside
+      return cdataOpenInside;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35690,12 +35778,12 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function tagCloseStart(code) {
     if (asciiAlpha(code)) {
-      effects.consume(code)
+      effects.consume(code);
       // @ts-expect-error: not null.
-      buffer = String.fromCharCode(code)
-      return tagName
+      buffer = String.fromCharCode(code);
+      return tagName;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35711,47 +35799,38 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function tagName(code) {
-    if (
-      code === null ||
-      code === 47 ||
-      code === 62 ||
-      markdownLineEndingOrSpace(code)
-    ) {
-      const slash = code === 47
-      const name = buffer.toLowerCase()
+    if (code === null || code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
+      const slash = code === 47;
+      const name = buffer.toLowerCase();
       if (!slash && !closingTag && htmlRawNames.includes(name)) {
-        marker = 1
+        marker = 1;
         // // Do not form containers.
         // tokenizer.concrete = true
-        return self.interrupt ? ok(code) : continuation(code)
+        return self.interrupt ? ok(code) : continuation(code);
       }
       if (htmlBlockNames.includes(buffer.toLowerCase())) {
-        marker = 6
+        marker = 6;
         if (slash) {
-          effects.consume(code)
-          return basicSelfClosing
+          effects.consume(code);
+          return basicSelfClosing;
         }
 
         // // Do not form containers.
         // tokenizer.concrete = true
-        return self.interrupt ? ok(code) : continuation(code)
+        return self.interrupt ? ok(code) : continuation(code);
       }
-      marker = 7
+      marker = 7;
       // Do not support complete HTML when interrupting.
-      return self.interrupt && !self.parser.lazy[self.now().line]
-        ? nok(code)
-        : closingTag
-        ? completeClosingTagAfter(code)
-        : completeAttributeNameBefore(code)
+      return self.interrupt && !self.parser.lazy[self.now().line] ? nok(code) : closingTag ? completeClosingTagAfter(code) : completeAttributeNameBefore(code);
     }
 
     // ASCII alphanumerical and `-`.
     if (code === 45 || asciiAlphanumeric(code)) {
-      effects.consume(code)
-      buffer += String.fromCharCode(code)
-      return tagName
+      effects.consume(code);
+      buffer += String.fromCharCode(code);
+      return tagName;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35766,12 +35845,12 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function basicSelfClosing(code) {
     if (code === 62) {
-      effects.consume(code)
+      effects.consume(code);
       // // Do not form containers.
       // tokenizer.concrete = true
-      return self.interrupt ? ok : continuation
+      return self.interrupt ? ok : continuation;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -35786,10 +35865,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeClosingTagAfter(code) {
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return completeClosingTagAfter
+      effects.consume(code);
+      return completeClosingTagAfter;
     }
-    return completeEnd(code)
+    return completeEnd(code);
   }
 
   /**
@@ -35817,20 +35896,20 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeAttributeNameBefore(code) {
     if (code === 47) {
-      effects.consume(code)
-      return completeEnd
+      effects.consume(code);
+      return completeEnd;
     }
 
     // ASCII alphanumerical and `:` and `_`.
     if (code === 58 || code === 95 || asciiAlpha(code)) {
-      effects.consume(code)
-      return completeAttributeName
+      effects.consume(code);
+      return completeAttributeName;
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return completeAttributeNameBefore
+      effects.consume(code);
+      return completeAttributeNameBefore;
     }
-    return completeEnd(code)
+    return completeEnd(code);
   }
 
   /**
@@ -35849,17 +35928,11 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeAttributeName(code) {
     // ASCII alphanumerical and `-`, `.`, `:`, and `_`.
-    if (
-      code === 45 ||
-      code === 46 ||
-      code === 58 ||
-      code === 95 ||
-      asciiAlphanumeric(code)
-    ) {
-      effects.consume(code)
-      return completeAttributeName
+    if (code === 45 || code === 46 || code === 58 || code === 95 || asciiAlphanumeric(code)) {
+      effects.consume(code);
+      return completeAttributeName;
     }
-    return completeAttributeNameAfter(code)
+    return completeAttributeNameAfter(code);
   }
 
   /**
@@ -35877,14 +35950,14 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeAttributeNameAfter(code) {
     if (code === 61) {
-      effects.consume(code)
-      return completeAttributeValueBefore
+      effects.consume(code);
+      return completeAttributeValueBefore;
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return completeAttributeNameAfter
+      effects.consume(code);
+      return completeAttributeNameAfter;
     }
-    return completeAttributeNameBefore(code)
+    return completeAttributeNameBefore(code);
   }
 
   /**
@@ -35901,25 +35974,19 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function completeAttributeValueBefore(code) {
-    if (
-      code === null ||
-      code === 60 ||
-      code === 61 ||
-      code === 62 ||
-      code === 96
-    ) {
-      return nok(code)
+    if (code === null || code === 60 || code === 61 || code === 62 || code === 96) {
+      return nok(code);
     }
     if (code === 34 || code === 39) {
-      effects.consume(code)
-      markerB = code
-      return completeAttributeValueQuoted
+      effects.consume(code);
+      markerB = code;
+      return completeAttributeValueQuoted;
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return completeAttributeValueBefore
+      effects.consume(code);
+      return completeAttributeValueBefore;
     }
-    return completeAttributeValueUnquoted(code)
+    return completeAttributeValueUnquoted(code);
   }
 
   /**
@@ -35936,15 +36003,15 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeAttributeValueQuoted(code) {
     if (code === markerB) {
-      effects.consume(code)
-      markerB = null
-      return completeAttributeValueQuotedAfter
+      effects.consume(code);
+      markerB = null;
+      return completeAttributeValueQuotedAfter;
     }
     if (code === null || markdownLineEnding(code)) {
-      return nok(code)
+      return nok(code);
     }
-    effects.consume(code)
-    return completeAttributeValueQuoted
+    effects.consume(code);
+    return completeAttributeValueQuoted;
   }
 
   /**
@@ -35958,21 +36025,11 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function completeAttributeValueUnquoted(code) {
-    if (
-      code === null ||
-      code === 34 ||
-      code === 39 ||
-      code === 47 ||
-      code === 60 ||
-      code === 61 ||
-      code === 62 ||
-      code === 96 ||
-      markdownLineEndingOrSpace(code)
-    ) {
-      return completeAttributeNameAfter(code)
+    if (code === null || code === 34 || code === 39 || code === 47 || code === 60 || code === 61 || code === 62 || code === 96 || markdownLineEndingOrSpace(code)) {
+      return completeAttributeNameAfter(code);
     }
-    effects.consume(code)
-    return completeAttributeValueUnquoted
+    effects.consume(code);
+    return completeAttributeValueUnquoted;
   }
 
   /**
@@ -35988,9 +36045,9 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeAttributeValueQuotedAfter(code) {
     if (code === 47 || code === 62 || markdownSpace(code)) {
-      return completeAttributeNameBefore(code)
+      return completeAttributeNameBefore(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -36005,10 +36062,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function completeEnd(code) {
     if (code === 62) {
-      effects.consume(code)
-      return completeAfter
+      effects.consume(code);
+      return completeAfter;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -36025,13 +36082,13 @@ function tokenizeHtmlFlow(effects, ok, nok) {
     if (code === null || markdownLineEnding(code)) {
       // // Do not form containers.
       // tokenizer.concrete = true
-      return continuation(code)
+      return continuation(code);
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return completeAfter
+      effects.consume(code);
+      return completeAfter;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -36046,39 +36103,35 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuation(code) {
     if (code === 45 && marker === 2) {
-      effects.consume(code)
-      return continuationCommentInside
+      effects.consume(code);
+      return continuationCommentInside;
     }
     if (code === 60 && marker === 1) {
-      effects.consume(code)
-      return continuationRawTagOpen
+      effects.consume(code);
+      return continuationRawTagOpen;
     }
     if (code === 62 && marker === 4) {
-      effects.consume(code)
-      return continuationClose
+      effects.consume(code);
+      return continuationClose;
     }
     if (code === 63 && marker === 3) {
-      effects.consume(code)
-      return continuationDeclarationInside
+      effects.consume(code);
+      return continuationDeclarationInside;
     }
     if (code === 93 && marker === 5) {
-      effects.consume(code)
-      return continuationCdataInside
+      effects.consume(code);
+      return continuationCdataInside;
     }
     if (markdownLineEnding(code) && (marker === 6 || marker === 7)) {
-      effects.exit('htmlFlowData')
-      return effects.check(
-        blankLineBefore,
-        continuationAfter,
-        continuationStart
-      )(code)
+      effects.exit("htmlFlowData");
+      return effects.check(blankLineBefore, continuationAfter, continuationStart)(code);
     }
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('htmlFlowData')
-      return continuationStart(code)
+      effects.exit("htmlFlowData");
+      return continuationStart(code);
     }
-    effects.consume(code)
-    return continuation
+    effects.consume(code);
+    return continuation;
   }
 
   /**
@@ -36093,11 +36146,7 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function continuationStart(code) {
-    return effects.check(
-      nonLazyContinuationStart,
-      continuationStartNonLazy,
-      continuationAfter
-    )(code)
+    return effects.check(nonLazyContinuationStart, continuationStartNonLazy, continuationAfter)(code);
   }
 
   /**
@@ -36112,10 +36161,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function continuationStartNonLazy(code) {
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return continuationBefore
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return continuationBefore;
   }
 
   /**
@@ -36131,10 +36180,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationBefore(code) {
     if (code === null || markdownLineEnding(code)) {
-      return continuationStart(code)
+      return continuationStart(code);
     }
-    effects.enter('htmlFlowData')
-    return continuation(code)
+    effects.enter("htmlFlowData");
+    return continuation(code);
   }
 
   /**
@@ -36149,10 +36198,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationCommentInside(code) {
     if (code === 45) {
-      effects.consume(code)
-      return continuationDeclarationInside
+      effects.consume(code);
+      return continuationDeclarationInside;
     }
-    return continuation(code)
+    return continuation(code);
   }
 
   /**
@@ -36167,11 +36216,11 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationRawTagOpen(code) {
     if (code === 47) {
-      effects.consume(code)
-      buffer = ''
-      return continuationRawEndTag
+      effects.consume(code);
+      buffer = '';
+      return continuationRawEndTag;
     }
-    return continuation(code)
+    return continuation(code);
   }
 
   /**
@@ -36186,20 +36235,20 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationRawEndTag(code) {
     if (code === 62) {
-      const name = buffer.toLowerCase()
+      const name = buffer.toLowerCase();
       if (htmlRawNames.includes(name)) {
-        effects.consume(code)
-        return continuationClose
+        effects.consume(code);
+        return continuationClose;
       }
-      return continuation(code)
+      return continuation(code);
     }
     if (asciiAlpha(code) && buffer.length < 8) {
-      effects.consume(code)
+      effects.consume(code);
       // @ts-expect-error: not null.
-      buffer += String.fromCharCode(code)
-      return continuationRawEndTag
+      buffer += String.fromCharCode(code);
+      return continuationRawEndTag;
     }
-    return continuation(code)
+    return continuation(code);
   }
 
   /**
@@ -36214,10 +36263,10 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationCdataInside(code) {
     if (code === 93) {
-      effects.consume(code)
-      return continuationDeclarationInside
+      effects.consume(code);
+      return continuationDeclarationInside;
     }
-    return continuation(code)
+    return continuation(code);
   }
 
   /**
@@ -36240,16 +36289,16 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationDeclarationInside(code) {
     if (code === 62) {
-      effects.consume(code)
-      return continuationClose
+      effects.consume(code);
+      return continuationClose;
     }
 
     // More dashes.
     if (code === 45 && marker === 2) {
-      effects.consume(code)
-      return continuationDeclarationInside
+      effects.consume(code);
+      return continuationDeclarationInside;
     }
-    return continuation(code)
+    return continuation(code);
   }
 
   /**
@@ -36264,11 +36313,11 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    */
   function continuationClose(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('htmlFlowData')
-      return continuationAfter(code)
+      effects.exit("htmlFlowData");
+      return continuationAfter(code);
     }
-    effects.consume(code)
-    return continuationClose
+    effects.consume(code);
+    return continuationClose;
   }
 
   /**
@@ -36282,12 +36331,12 @@ function tokenizeHtmlFlow(effects, ok, nok) {
    * @type {State}
    */
   function continuationAfter(code) {
-    effects.exit('htmlFlow')
+    effects.exit("htmlFlow");
     // // Feel free to interrupt.
     // tokenizer.interrupt = false
     // // No longer concrete.
     // tokenizer.concrete = false
-    return ok(code)
+    return ok(code);
   }
 }
 
@@ -36296,8 +36345,8 @@ function tokenizeHtmlFlow(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeNonLazyContinuationStart(effects, ok, nok) {
-  const self = this
-  return start
+  const self = this;
+  return start;
 
   /**
    * At eol, before continuation.
@@ -36312,12 +36361,12 @@ function tokenizeNonLazyContinuationStart(effects, ok, nok) {
    */
   function start(code) {
     if (markdownLineEnding(code)) {
-      effects.enter('lineEnding')
-      effects.consume(code)
-      effects.exit('lineEnding')
-      return after
+      effects.enter("lineEnding");
+      effects.consume(code);
+      effects.exit("lineEnding");
+      return after;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -36332,7 +36381,7 @@ function tokenizeNonLazyContinuationStart(effects, ok, nok) {
    * @type {State}
    */
   function after(code) {
-    return self.parser.lazy[self.now().line] ? nok(code) : ok(code)
+    return self.parser.lazy[self.now().line] ? nok(code) : ok(code);
   }
 }
 
@@ -36341,7 +36390,7 @@ function tokenizeNonLazyContinuationStart(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeBlankLineBefore(effects, ok, nok) {
-  return start
+  return start;
 
   /**
    * Before eol, expecting blank line.
@@ -36355,14 +36404,13 @@ function tokenizeBlankLineBefore(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return effects.attempt(blankLine, ok, nok)
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return effects.attempt(blankLine, ok, nok);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/code-fenced.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/code-fenced.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -36377,31 +36425,31 @@ function tokenizeBlankLineBefore(effects, ok, nok) {
 const nonLazyContinuation = {
   tokenize: tokenizeNonLazyContinuation,
   partial: true
-}
+};
 
 /** @type {Construct} */
 const codeFenced = {
   name: 'codeFenced',
   tokenize: tokenizeCodeFenced,
   concrete: true
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeCodeFenced(effects, ok, nok) {
-  const self = this
+  const self = this;
   /** @type {Construct} */
   const closeStart = {
     tokenize: tokenizeCloseStart,
     partial: true
-  }
-  let initialPrefix = 0
-  let sizeOpen = 0
+  };
+  let initialPrefix = 0;
+  let sizeOpen = 0;
   /** @type {NonNullable<Code>} */
-  let marker
-  return start
+  let marker;
+  return start;
 
   /**
    * Start of code.
@@ -36417,7 +36465,7 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function start(code) {
     // To do: parse whitespace like `markdown-rs`.
-    return beforeSequenceOpen(code)
+    return beforeSequenceOpen(code);
   }
 
   /**
@@ -36433,16 +36481,13 @@ function tokenizeCodeFenced(effects, ok, nok) {
    * @type {State}
    */
   function beforeSequenceOpen(code) {
-    const tail = self.events[self.events.length - 1]
-    initialPrefix =
-      tail && tail[1].type === 'linePrefix'
-        ? tail[2].sliceSerialize(tail[1], true).length
-        : 0
-    marker = code
-    effects.enter('codeFenced')
-    effects.enter('codeFencedFence')
-    effects.enter('codeFencedFenceSequence')
-    return sequenceOpen(code)
+    const tail = self.events[self.events.length - 1];
+    initialPrefix = tail && tail[1].type === "linePrefix" ? tail[2].sliceSerialize(tail[1], true).length : 0;
+    marker = code;
+    effects.enter("codeFenced");
+    effects.enter("codeFencedFence");
+    effects.enter("codeFencedFenceSequence");
+    return sequenceOpen(code);
   }
 
   /**
@@ -36459,17 +36504,15 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function sequenceOpen(code) {
     if (code === marker) {
-      sizeOpen++
-      effects.consume(code)
-      return sequenceOpen
+      sizeOpen++;
+      effects.consume(code);
+      return sequenceOpen;
     }
     if (sizeOpen < 3) {
-      return nok(code)
+      return nok(code);
     }
-    effects.exit('codeFencedFenceSequence')
-    return markdownSpace(code)
-      ? factorySpace(effects, infoBefore, 'whitespace')(code)
-      : infoBefore(code)
+    effects.exit("codeFencedFenceSequence");
+    return markdownSpace(code) ? factorySpace(effects, infoBefore, "whitespace")(code) : infoBefore(code);
   }
 
   /**
@@ -36486,16 +36529,14 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function infoBefore(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('codeFencedFence')
-      return self.interrupt
-        ? ok(code)
-        : effects.check(nonLazyContinuation, atNonLazyBreak, after)(code)
+      effects.exit("codeFencedFence");
+      return self.interrupt ? ok(code) : effects.check(nonLazyContinuation, atNonLazyBreak, after)(code);
     }
-    effects.enter('codeFencedFenceInfo')
-    effects.enter('chunkString', {
-      contentType: 'string'
-    })
-    return info(code)
+    effects.enter("codeFencedFenceInfo");
+    effects.enter("chunkString", {
+      contentType: "string"
+    });
+    return info(code);
   }
 
   /**
@@ -36512,20 +36553,20 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function info(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('chunkString')
-      effects.exit('codeFencedFenceInfo')
-      return infoBefore(code)
+      effects.exit("chunkString");
+      effects.exit("codeFencedFenceInfo");
+      return infoBefore(code);
     }
     if (markdownSpace(code)) {
-      effects.exit('chunkString')
-      effects.exit('codeFencedFenceInfo')
-      return factorySpace(effects, metaBefore, 'whitespace')(code)
+      effects.exit("chunkString");
+      effects.exit("codeFencedFenceInfo");
+      return factorySpace(effects, metaBefore, "whitespace")(code);
     }
     if (code === 96 && code === marker) {
-      return nok(code)
+      return nok(code);
     }
-    effects.consume(code)
-    return info
+    effects.consume(code);
+    return info;
   }
 
   /**
@@ -36542,13 +36583,13 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function metaBefore(code) {
     if (code === null || markdownLineEnding(code)) {
-      return infoBefore(code)
+      return infoBefore(code);
     }
-    effects.enter('codeFencedFenceMeta')
-    effects.enter('chunkString', {
-      contentType: 'string'
-    })
-    return meta(code)
+    effects.enter("codeFencedFenceMeta");
+    effects.enter("chunkString", {
+      contentType: "string"
+    });
+    return meta(code);
   }
 
   /**
@@ -36565,15 +36606,15 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function meta(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('chunkString')
-      effects.exit('codeFencedFenceMeta')
-      return infoBefore(code)
+      effects.exit("chunkString");
+      effects.exit("codeFencedFenceMeta");
+      return infoBefore(code);
     }
     if (code === 96 && code === marker) {
-      return nok(code)
+      return nok(code);
     }
-    effects.consume(code)
-    return meta
+    effects.consume(code);
+    return meta;
   }
 
   /**
@@ -36590,7 +36631,7 @@ function tokenizeCodeFenced(effects, ok, nok) {
    * @type {State}
    */
   function atNonLazyBreak(code) {
-    return effects.attempt(closeStart, after, contentBefore)(code)
+    return effects.attempt(closeStart, after, contentBefore)(code);
   }
 
   /**
@@ -36606,10 +36647,10 @@ function tokenizeCodeFenced(effects, ok, nok) {
    * @type {State}
    */
   function contentBefore(code) {
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return contentStart
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return contentStart;
   }
 
   /**
@@ -36625,14 +36666,7 @@ function tokenizeCodeFenced(effects, ok, nok) {
    * @type {State}
    */
   function contentStart(code) {
-    return initialPrefix > 0 && markdownSpace(code)
-      ? factorySpace(
-          effects,
-          beforeContentChunk,
-          'linePrefix',
-          initialPrefix + 1
-        )(code)
-      : beforeContentChunk(code)
+    return initialPrefix > 0 && markdownSpace(code) ? factorySpace(effects, beforeContentChunk, "linePrefix", initialPrefix + 1)(code) : beforeContentChunk(code);
   }
 
   /**
@@ -36649,10 +36683,10 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function beforeContentChunk(code) {
     if (code === null || markdownLineEnding(code)) {
-      return effects.check(nonLazyContinuation, atNonLazyBreak, after)(code)
+      return effects.check(nonLazyContinuation, atNonLazyBreak, after)(code);
     }
-    effects.enter('codeFlowValue')
-    return contentChunk(code)
+    effects.enter("codeFlowValue");
+    return contentChunk(code);
   }
 
   /**
@@ -36669,11 +36703,11 @@ function tokenizeCodeFenced(effects, ok, nok) {
    */
   function contentChunk(code) {
     if (code === null || markdownLineEnding(code)) {
-      effects.exit('codeFlowValue')
-      return beforeContentChunk(code)
+      effects.exit("codeFlowValue");
+      return beforeContentChunk(code);
     }
-    effects.consume(code)
-    return contentChunk
+    effects.consume(code);
+    return contentChunk;
   }
 
   /**
@@ -36689,8 +36723,8 @@ function tokenizeCodeFenced(effects, ok, nok) {
    * @type {State}
    */
   function after(code) {
-    effects.exit('codeFenced')
-    return ok(code)
+    effects.exit("codeFenced");
+    return ok(code);
   }
 
   /**
@@ -36698,8 +36732,8 @@ function tokenizeCodeFenced(effects, ok, nok) {
    * @type {Tokenizer}
    */
   function tokenizeCloseStart(effects, ok, nok) {
-    let size = 0
-    return startBefore
+    let size = 0;
+    return startBefore;
 
     /**
      *
@@ -36707,10 +36741,10 @@ function tokenizeCodeFenced(effects, ok, nok) {
      * @type {State}
      */
     function startBefore(code) {
-      effects.enter('lineEnding')
-      effects.consume(code)
-      effects.exit('lineEnding')
-      return start
+      effects.enter("lineEnding");
+      effects.consume(code);
+      effects.exit("lineEnding");
+      return start;
     }
 
     /**
@@ -36729,17 +36763,8 @@ function tokenizeCodeFenced(effects, ok, nok) {
       // Always populated by defaults.
 
       // To do: `enter` here or in next state?
-      effects.enter('codeFencedFence')
-      return markdownSpace(code)
-        ? factorySpace(
-            effects,
-            beforeSequenceClose,
-            'linePrefix',
-            self.parser.constructs.disable.null.includes('codeIndented')
-              ? undefined
-              : 4
-          )(code)
-        : beforeSequenceClose(code)
+      effects.enter("codeFencedFence");
+      return markdownSpace(code) ? factorySpace(effects, beforeSequenceClose, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code) : beforeSequenceClose(code);
     }
 
     /**
@@ -36756,10 +36781,10 @@ function tokenizeCodeFenced(effects, ok, nok) {
      */
     function beforeSequenceClose(code) {
       if (code === marker) {
-        effects.enter('codeFencedFenceSequence')
-        return sequenceClose(code)
+        effects.enter("codeFencedFenceSequence");
+        return sequenceClose(code);
       }
-      return nok(code)
+      return nok(code);
     }
 
     /**
@@ -36776,17 +36801,15 @@ function tokenizeCodeFenced(effects, ok, nok) {
      */
     function sequenceClose(code) {
       if (code === marker) {
-        size++
-        effects.consume(code)
-        return sequenceClose
+        size++;
+        effects.consume(code);
+        return sequenceClose;
       }
       if (size >= sizeOpen) {
-        effects.exit('codeFencedFenceSequence')
-        return markdownSpace(code)
-          ? factorySpace(effects, sequenceCloseAfter, 'whitespace')(code)
-          : sequenceCloseAfter(code)
+        effects.exit("codeFencedFenceSequence");
+        return markdownSpace(code) ? factorySpace(effects, sequenceCloseAfter, "whitespace")(code) : sequenceCloseAfter(code);
       }
-      return nok(code)
+      return nok(code);
     }
 
     /**
@@ -36803,10 +36826,10 @@ function tokenizeCodeFenced(effects, ok, nok) {
      */
     function sequenceCloseAfter(code) {
       if (code === null || markdownLineEnding(code)) {
-        effects.exit('codeFencedFence')
-        return ok(code)
+        effects.exit("codeFencedFence");
+        return ok(code);
       }
-      return nok(code)
+      return nok(code);
     }
   }
 }
@@ -36816,8 +36839,8 @@ function tokenizeCodeFenced(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeNonLazyContinuation(effects, ok, nok) {
-  const self = this
-  return start
+  const self = this;
+  return start;
 
   /**
    *
@@ -36826,12 +36849,12 @@ function tokenizeNonLazyContinuation(effects, ok, nok) {
    */
   function start(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return lineStart
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return lineStart;
   }
 
   /**
@@ -36840,10 +36863,9 @@ function tokenizeNonLazyContinuation(effects, ok, nok) {
    * @type {State}
    */
   function lineStart(code) {
-    return self.parser.lazy[self.now().line] ? nok(code) : ok(code)
+    return self.parser.lazy[self.now().line] ? nok(code) : ok(code);
   }
 }
-
 ;// CONCATENATED MODULE: ./node_modules/character-entities/index.js
 /**
  * Map of named character references.
@@ -38998,7 +39020,7 @@ function decodeNamedCharacterReference(value) {
   return own.call(characterEntities, value) ? characterEntities[value] : false
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/character-reference.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/character-reference.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -39013,20 +39035,20 @@ function decodeNamedCharacterReference(value) {
 const characterReference = {
   name: 'characterReference',
   tokenize: tokenizeCharacterReference
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeCharacterReference(effects, ok, nok) {
-  const self = this
-  let size = 0
+  const self = this;
+  let size = 0;
   /** @type {number} */
-  let max
+  let max;
   /** @type {(code: Code) => boolean} */
-  let test
-  return start
+  let test;
+  return start;
 
   /**
    * Start of character reference.
@@ -39043,11 +39065,11 @@ function tokenizeCharacterReference(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('characterReference')
-    effects.enter('characterReferenceMarker')
-    effects.consume(code)
-    effects.exit('characterReferenceMarker')
-    return open
+    effects.enter("characterReference");
+    effects.enter("characterReferenceMarker");
+    effects.consume(code);
+    effects.exit("characterReferenceMarker");
+    return open;
   }
 
   /**
@@ -39067,15 +39089,15 @@ function tokenizeCharacterReference(effects, ok, nok) {
    */
   function open(code) {
     if (code === 35) {
-      effects.enter('characterReferenceMarkerNumeric')
-      effects.consume(code)
-      effects.exit('characterReferenceMarkerNumeric')
-      return numeric
+      effects.enter("characterReferenceMarkerNumeric");
+      effects.consume(code);
+      effects.exit("characterReferenceMarkerNumeric");
+      return numeric;
     }
-    effects.enter('characterReferenceValue')
-    max = 31
-    test = asciiAlphanumeric
-    return value(code)
+    effects.enter("characterReferenceValue");
+    max = 31;
+    test = asciiAlphanumeric;
+    return value(code);
   }
 
   /**
@@ -39092,18 +39114,18 @@ function tokenizeCharacterReference(effects, ok, nok) {
    */
   function numeric(code) {
     if (code === 88 || code === 120) {
-      effects.enter('characterReferenceMarkerHexadecimal')
-      effects.consume(code)
-      effects.exit('characterReferenceMarkerHexadecimal')
-      effects.enter('characterReferenceValue')
-      max = 6
-      test = asciiHexDigit
-      return value
+      effects.enter("characterReferenceMarkerHexadecimal");
+      effects.consume(code);
+      effects.exit("characterReferenceMarkerHexadecimal");
+      effects.enter("characterReferenceValue");
+      max = 6;
+      test = asciiHexDigit;
+      return value;
     }
-    effects.enter('characterReferenceValue')
-    max = 7
-    test = asciiDigit
-    return value(code)
+    effects.enter("characterReferenceValue");
+    max = 7;
+    test = asciiDigit;
+    return value(code);
   }
 
   /**
@@ -39125,31 +39147,27 @@ function tokenizeCharacterReference(effects, ok, nok) {
    */
   function value(code) {
     if (code === 59 && size) {
-      const token = effects.exit('characterReferenceValue')
-      if (
-        test === asciiAlphanumeric &&
-        !decodeNamedCharacterReference(self.sliceSerialize(token))
-      ) {
-        return nok(code)
+      const token = effects.exit("characterReferenceValue");
+      if (test === asciiAlphanumeric && !decodeNamedCharacterReference(self.sliceSerialize(token))) {
+        return nok(code);
       }
 
       // To do: `markdown-rs` uses a different name:
       // `CharacterReferenceMarkerSemi`.
-      effects.enter('characterReferenceMarker')
-      effects.consume(code)
-      effects.exit('characterReferenceMarker')
-      effects.exit('characterReference')
-      return ok
+      effects.enter("characterReferenceMarker");
+      effects.consume(code);
+      effects.exit("characterReferenceMarker");
+      effects.exit("characterReference");
+      return ok;
     }
     if (test(code) && size++ < max) {
-      effects.consume(code)
-      return value
+      effects.consume(code);
+      return value;
     }
-    return nok(code)
+    return nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/character-escape.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/character-escape.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -39162,14 +39180,14 @@ function tokenizeCharacterReference(effects, ok, nok) {
 const characterEscape = {
   name: 'characterEscape',
   tokenize: tokenizeCharacterEscape
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeCharacterEscape(effects, ok, nok) {
-  return start
+  return start;
 
   /**
    * Start of character escape.
@@ -39182,11 +39200,11 @@ function tokenizeCharacterEscape(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('characterEscape')
-    effects.enter('escapeMarker')
-    effects.consume(code)
-    effects.exit('escapeMarker')
-    return inside
+    effects.enter("characterEscape");
+    effects.enter("escapeMarker");
+    effects.consume(code);
+    effects.exit("escapeMarker");
+    return inside;
   }
 
   /**
@@ -39202,17 +39220,16 @@ function tokenizeCharacterEscape(effects, ok, nok) {
   function inside(code) {
     // ASCII punctuation.
     if (asciiPunctuation(code)) {
-      effects.enter('characterEscapeValue')
-      effects.consume(code)
-      effects.exit('characterEscapeValue')
-      effects.exit('characterEscape')
-      return ok
+      effects.enter("characterEscapeValue");
+      effects.consume(code);
+      effects.exit("characterEscapeValue");
+      effects.exit("characterEscape");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/line-ending.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/line-ending.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -39226,25 +39243,24 @@ function tokenizeCharacterEscape(effects, ok, nok) {
 const lineEnding = {
   name: 'lineEnding',
   tokenize: tokenizeLineEnding
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeLineEnding(effects, ok) {
-  return start
+  return start;
 
   /** @type {State} */
   function start(code) {
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return factorySpace(effects, ok, 'linePrefix')
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return factorySpace(effects, ok, "linePrefix");
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/label-end.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/label-end.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').Event} Event
@@ -39269,139 +39285,113 @@ const labelEnd = {
   tokenize: tokenizeLabelEnd,
   resolveTo: resolveToLabelEnd,
   resolveAll: resolveAllLabelEnd
-}
+};
 
 /** @type {Construct} */
 const resourceConstruct = {
   tokenize: tokenizeResource
-}
+};
 /** @type {Construct} */
 const referenceFullConstruct = {
   tokenize: tokenizeReferenceFull
-}
+};
 /** @type {Construct} */
 const referenceCollapsedConstruct = {
   tokenize: tokenizeReferenceCollapsed
-}
+};
 
 /** @type {Resolver} */
 function resolveAllLabelEnd(events) {
-  let index = -1
+  let index = -1;
   while (++index < events.length) {
-    const token = events[index][1]
-    if (
-      token.type === 'labelImage' ||
-      token.type === 'labelLink' ||
-      token.type === 'labelEnd'
-    ) {
+    const token = events[index][1];
+    if (token.type === "labelImage" || token.type === "labelLink" || token.type === "labelEnd") {
       // Remove the marker.
-      events.splice(index + 1, token.type === 'labelImage' ? 4 : 2)
-      token.type = 'data'
-      index++
+      events.splice(index + 1, token.type === "labelImage" ? 4 : 2);
+      token.type = "data";
+      index++;
     }
   }
-  return events
+  return events;
 }
 
 /** @type {Resolver} */
 function resolveToLabelEnd(events, context) {
-  let index = events.length
-  let offset = 0
+  let index = events.length;
+  let offset = 0;
   /** @type {Token} */
-  let token
+  let token;
   /** @type {number | undefined} */
-  let open
+  let open;
   /** @type {number | undefined} */
-  let close
+  let close;
   /** @type {Array<Event>} */
-  let media
+  let media;
 
   // Find an opening.
   while (index--) {
-    token = events[index][1]
+    token = events[index][1];
     if (open) {
       // If we see another link, or inactive link label, we’ve been here before.
-      if (
-        token.type === 'link' ||
-        (token.type === 'labelLink' && token._inactive)
-      ) {
-        break
+      if (token.type === "link" || token.type === "labelLink" && token._inactive) {
+        break;
       }
 
       // Mark other link openings as inactive, as we can’t have links in
       // links.
-      if (events[index][0] === 'enter' && token.type === 'labelLink') {
-        token._inactive = true
+      if (events[index][0] === 'enter' && token.type === "labelLink") {
+        token._inactive = true;
       }
     } else if (close) {
-      if (
-        events[index][0] === 'enter' &&
-        (token.type === 'labelImage' || token.type === 'labelLink') &&
-        !token._balanced
-      ) {
-        open = index
-        if (token.type !== 'labelLink') {
-          offset = 2
-          break
+      if (events[index][0] === 'enter' && (token.type === "labelImage" || token.type === "labelLink") && !token._balanced) {
+        open = index;
+        if (token.type !== "labelLink") {
+          offset = 2;
+          break;
         }
       }
-    } else if (token.type === 'labelEnd') {
-      close = index
+    } else if (token.type === "labelEnd") {
+      close = index;
     }
   }
   const group = {
-    type: events[open][1].type === 'labelLink' ? 'link' : 'image',
+    type: events[open][1].type === "labelLink" ? "link" : "image",
     start: Object.assign({}, events[open][1].start),
     end: Object.assign({}, events[events.length - 1][1].end)
-  }
+  };
   const label = {
-    type: 'label',
+    type: "label",
     start: Object.assign({}, events[open][1].start),
     end: Object.assign({}, events[close][1].end)
-  }
+  };
   const text = {
-    type: 'labelText',
+    type: "labelText",
     start: Object.assign({}, events[open + offset + 2][1].end),
     end: Object.assign({}, events[close - 2][1].start)
-  }
-  media = [
-    ['enter', group, context],
-    ['enter', label, context]
-  ]
+  };
+  media = [['enter', group, context], ['enter', label, context]];
 
   // Opening marker.
-  media = push(media, events.slice(open + 1, open + offset + 3))
+  media = push(media, events.slice(open + 1, open + offset + 3));
 
   // Text open.
-  media = push(media, [['enter', text, context]])
+  media = push(media, [['enter', text, context]]);
 
   // Always populated by defaults.
 
   // Between.
-  media = push(
-    media,
-    resolveAll(
-      context.parser.constructs.insideSpan.null,
-      events.slice(open + offset + 4, close - 3),
-      context
-    )
-  )
+  media = push(media, resolveAll(context.parser.constructs.insideSpan.null, events.slice(open + offset + 4, close - 3), context));
 
   // Text close, marker close, label close.
-  media = push(media, [
-    ['exit', text, context],
-    events[close - 2],
-    events[close - 1],
-    ['exit', label, context]
-  ])
+  media = push(media, [['exit', text, context], events[close - 2], events[close - 1], ['exit', label, context]]);
 
   // Reference, resource, or so.
-  media = push(media, events.slice(close + 1))
+  media = push(media, events.slice(close + 1));
 
   // Media close.
-  media = push(media, [['exit', group, context]])
-  splice(events, open, events.length, media)
-  return events
+  media = push(media, [['exit', group, context]]);
+  splice(events, open, events.length, media);
+  return events;
 }
 
 /**
@@ -39409,25 +39399,21 @@ function resolveToLabelEnd(events, context) {
  * @type {Tokenizer}
  */
 function tokenizeLabelEnd(effects, ok, nok) {
-  const self = this
-  let index = self.events.length
+  const self = this;
+  let index = self.events.length;
   /** @type {Token} */
-  let labelStart
+  let labelStart;
   /** @type {boolean} */
-  let defined
+  let defined;
 
   // Find an opening.
   while (index--) {
-    if (
-      (self.events[index][1].type === 'labelImage' ||
-        self.events[index][1].type === 'labelLink') &&
-      !self.events[index][1]._balanced
-    ) {
-      labelStart = self.events[index][1]
-      break
+    if ((self.events[index][1].type === "labelImage" || self.events[index][1].type === "labelLink") && !self.events[index][1]._balanced) {
+      labelStart = self.events[index][1];
+      break;
     }
   }
-  return start
+  return start;
 
   /**
    * Start of label end.
@@ -39447,7 +39433,7 @@ function tokenizeLabelEnd(effects, ok, nok) {
   function start(code) {
     // If there is not an okay opening.
     if (!labelStart) {
-      return nok(code)
+      return nok(code);
     }
 
     // If the corresponding label (link) start is marked as inactive,
@@ -39460,22 +39446,18 @@ function tokenizeLabelEnd(effects, ok, nok) {
     //
     // We can’t have that, so it’s just balanced brackets.
     if (labelStart._inactive) {
-      return labelEndNok(code)
+      return labelEndNok(code);
     }
-    defined = self.parser.defined.includes(
-      normalizeIdentifier(
-        self.sliceSerialize({
-          start: labelStart.end,
-          end: self.now()
-        })
-      )
-    )
-    effects.enter('labelEnd')
-    effects.enter('labelMarker')
-    effects.consume(code)
-    effects.exit('labelMarker')
-    effects.exit('labelEnd')
-    return after
+    defined = self.parser.defined.includes(normalizeIdentifier(self.sliceSerialize({
+      start: labelStart.end,
+      end: self.now()
+    })));
+    effects.enter("labelEnd");
+    effects.enter("labelMarker");
+    effects.consume(code);
+    effects.exit("labelMarker");
+    effects.exit("labelEnd");
+    return after;
   }
 
   /**
@@ -39500,24 +39482,16 @@ function tokenizeLabelEnd(effects, ok, nok) {
 
     // Resource (`[asd](fgh)`)?
     if (code === 40) {
-      return effects.attempt(
-        resourceConstruct,
-        labelEndOk,
-        defined ? labelEndOk : labelEndNok
-      )(code)
+      return effects.attempt(resourceConstruct, labelEndOk, defined ? labelEndOk : labelEndNok)(code);
     }
 
     // Full (`[asd][fgh]`) or collapsed (`[asd][]`) reference?
     if (code === 91) {
-      return effects.attempt(
-        referenceFullConstruct,
-        labelEndOk,
-        defined ? referenceNotFull : labelEndNok
-      )(code)
+      return effects.attempt(referenceFullConstruct, labelEndOk, defined ? referenceNotFull : labelEndNok)(code);
     }
 
     // Shortcut (`[asd]`) reference?
-    return defined ? labelEndOk(code) : labelEndNok(code)
+    return defined ? labelEndOk(code) : labelEndNok(code);
   }
 
   /**
@@ -39535,11 +39509,7 @@ function tokenizeLabelEnd(effects, ok, nok) {
    * @type {State}
    */
   function referenceNotFull(code) {
-    return effects.attempt(
-      referenceCollapsedConstruct,
-      labelEndOk,
-      labelEndNok
-    )(code)
+    return effects.attempt(referenceCollapsedConstruct, labelEndOk, labelEndNok)(code);
   }
 
   /**
@@ -39560,7 +39530,7 @@ function tokenizeLabelEnd(effects, ok, nok) {
    */
   function labelEndOk(code) {
     // Note: `markdown-rs` does a bunch of stuff here.
-    return ok(code)
+    return ok(code);
   }
 
   /**
@@ -39580,8 +39550,8 @@ function tokenizeLabelEnd(effects, ok, nok) {
    * @type {State}
    */
   function labelEndNok(code) {
-    labelStart._balanced = true
-    return nok(code)
+    labelStart._balanced = true;
+    return nok(code);
   }
 }
 
@@ -39590,7 +39560,7 @@ function tokenizeLabelEnd(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeResource(effects, ok, nok) {
-  return resourceStart
+  return resourceStart;
 
   /**
    * At a resource.
@@ -39603,11 +39573,11 @@ function tokenizeResource(effects, ok, nok) {
    * @type {State}
    */
   function resourceStart(code) {
-    effects.enter('resource')
-    effects.enter('resourceMarker')
-    effects.consume(code)
-    effects.exit('resourceMarker')
-    return resourceBefore
+    effects.enter("resource");
+    effects.enter("resourceMarker");
+    effects.consume(code);
+    effects.exit("resourceMarker");
+    return resourceBefore;
   }
 
   /**
@@ -39621,9 +39591,7 @@ function tokenizeResource(effects, ok, nok) {
    * @type {State}
    */
   function resourceBefore(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, resourceOpen)(code)
-      : resourceOpen(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, resourceOpen)(code) : resourceOpen(code);
   }
 
   /**
@@ -39638,19 +39606,9 @@ function tokenizeResource(effects, ok, nok) {
    */
   function resourceOpen(code) {
     if (code === 41) {
-      return resourceEnd(code)
+      return resourceEnd(code);
     }
-    return factoryDestination(
-      effects,
-      resourceDestinationAfter,
-      resourceDestinationMissing,
-      'resourceDestination',
-      'resourceDestinationLiteral',
-      'resourceDestinationLiteralMarker',
-      'resourceDestinationRaw',
-      'resourceDestinationString',
-      32
-    )(code)
+    return factoryDestination(effects, resourceDestinationAfter, resourceDestinationMissing, "resourceDestination", "resourceDestinationLiteral", "resourceDestinationLiteralMarker", "resourceDestinationRaw", "resourceDestinationString", 32)(code);
   }
 
   /**
@@ -39664,9 +39622,7 @@ function tokenizeResource(effects, ok, nok) {
    * @type {State}
    */
   function resourceDestinationAfter(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, resourceBetween)(code)
-      : resourceEnd(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, resourceBetween)(code) : resourceEnd(code);
   }
 
   /**
@@ -39680,7 +39636,7 @@ function tokenizeResource(effects, ok, nok) {
    * @type {State}
    */
   function resourceDestinationMissing(code) {
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -39695,16 +39651,9 @@ function tokenizeResource(effects, ok, nok) {
    */
   function resourceBetween(code) {
     if (code === 34 || code === 39 || code === 40) {
-      return factoryTitle(
-        effects,
-        resourceTitleAfter,
-        nok,
-        'resourceTitle',
-        'resourceTitleMarker',
-        'resourceTitleString'
-      )(code)
+      return factoryTitle(effects, resourceTitleAfter, nok, "resourceTitle", "resourceTitleMarker", "resourceTitleString")(code);
     }
-    return resourceEnd(code)
+    return resourceEnd(code);
   }
 
   /**
@@ -39718,9 +39667,7 @@ function tokenizeResource(effects, ok, nok) {
    * @type {State}
    */
   function resourceTitleAfter(code) {
-    return markdownLineEndingOrSpace(code)
-      ? factoryWhitespace(effects, resourceEnd)(code)
-      : resourceEnd(code)
+    return markdownLineEndingOrSpace(code) ? factoryWhitespace(effects, resourceEnd)(code) : resourceEnd(code);
   }
 
   /**
@@ -39735,13 +39682,13 @@ function tokenizeResource(effects, ok, nok) {
    */
   function resourceEnd(code) {
     if (code === 41) {
-      effects.enter('resourceMarker')
-      effects.consume(code)
-      effects.exit('resourceMarker')
-      effects.exit('resource')
-      return ok
+      effects.enter("resourceMarker");
+      effects.consume(code);
+      effects.exit("resourceMarker");
+      effects.exit("resource");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -39750,8 +39697,8 @@ function tokenizeResource(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeReferenceFull(effects, ok, nok) {
-  const self = this
-  return referenceFull
+  const self = this;
+  return referenceFull;
 
   /**
    * In a reference (full), at the `[`.
@@ -39764,15 +39711,7 @@ function tokenizeReferenceFull(effects, ok, nok) {
    * @type {State}
    */
   function referenceFull(code) {
-    return factoryLabel.call(
-      self,
-      effects,
-      referenceFullAfter,
-      referenceFullMissing,
-      'reference',
-      'referenceMarker',
-      'referenceString'
-    )(code)
+    return factoryLabel.call(self, effects, referenceFullAfter, referenceFullMissing, "reference", "referenceMarker", "referenceString")(code);
   }
 
   /**
@@ -39786,13 +39725,7 @@ function tokenizeReferenceFull(effects, ok, nok) {
    * @type {State}
    */
   function referenceFullAfter(code) {
-    return self.parser.defined.includes(
-      normalizeIdentifier(
-        self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1)
-      )
-    )
-      ? ok(code)
-      : nok(code)
+    return self.parser.defined.includes(normalizeIdentifier(self.sliceSerialize(self.events[self.events.length - 1][1]).slice(1, -1))) ? ok(code) : nok(code);
   }
 
   /**
@@ -39806,7 +39739,7 @@ function tokenizeReferenceFull(effects, ok, nok) {
    * @type {State}
    */
   function referenceFullMissing(code) {
-    return nok(code)
+    return nok(code);
   }
 }
 
@@ -39815,7 +39748,7 @@ function tokenizeReferenceFull(effects, ok, nok) {
  * @type {Tokenizer}
  */
 function tokenizeReferenceCollapsed(effects, ok, nok) {
-  return referenceCollapsedStart
+  return referenceCollapsedStart;
 
   /**
    * In reference (collapsed), at `[`.
@@ -39832,11 +39765,11 @@ function tokenizeReferenceCollapsed(effects, ok, nok) {
   function referenceCollapsedStart(code) {
     // We only attempt a collapsed label if there’s a `[`.
 
-    effects.enter('reference')
-    effects.enter('referenceMarker')
-    effects.consume(code)
-    effects.exit('referenceMarker')
-    return referenceCollapsedOpen
+    effects.enter("reference");
+    effects.enter("referenceMarker");
+    effects.consume(code);
+    effects.exit("referenceMarker");
+    return referenceCollapsedOpen;
   }
 
   /**
@@ -39853,17 +39786,16 @@ function tokenizeReferenceCollapsed(effects, ok, nok) {
    */
   function referenceCollapsedOpen(code) {
     if (code === 93) {
-      effects.enter('referenceMarker')
-      effects.consume(code)
-      effects.exit('referenceMarker')
-      effects.exit('reference')
-      return ok
+      effects.enter("referenceMarker");
+      effects.consume(code);
+      effects.exit("referenceMarker");
+      effects.exit("reference");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/label-start-image.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/label-start-image.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -39878,15 +39810,15 @@ const labelStartImage = {
   name: 'labelStartImage',
   tokenize: tokenizeLabelStartImage,
   resolveAll: labelEnd.resolveAll
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeLabelStartImage(effects, ok, nok) {
-  const self = this
-  return start
+  const self = this;
+  return start;
 
   /**
    * Start of label (image) start.
@@ -39899,11 +39831,11 @@ function tokenizeLabelStartImage(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('labelImage')
-    effects.enter('labelImageMarker')
-    effects.consume(code)
-    effects.exit('labelImageMarker')
-    return open
+    effects.enter("labelImage");
+    effects.enter("labelImageMarker");
+    effects.consume(code);
+    effects.exit("labelImageMarker");
+    return open;
   }
 
   /**
@@ -39918,13 +39850,13 @@ function tokenizeLabelStartImage(effects, ok, nok) {
    */
   function open(code) {
     if (code === 91) {
-      effects.enter('labelMarker')
-      effects.consume(code)
-      effects.exit('labelMarker')
-      effects.exit('labelImage')
-      return after
+      effects.enter("labelMarker");
+      effects.consume(code);
+      effects.exit("labelMarker");
+      effects.exit("labelImage");
+      return after;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -39960,13 +39892,10 @@ function tokenizeLabelStartImage(effects, ok, nok) {
     // behavior isn’t.
     // Hidden footnotes hook.
     /* c8 ignore next 3 */
-    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs
-      ? nok(code)
-      : ok(code)
+    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs ? nok(code) : ok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-classify-character/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-classify-character/index.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  */
@@ -39999,7 +39928,7 @@ function classifyCharacter(code) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/attention.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/attention.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -40020,7 +39949,7 @@ const attention = {
   name: 'attention',
   tokenize: tokenizeAttention,
   resolveAll: resolveAllAttention
-}
+};
 
 /**
  * Take all events and resolve attention to emphasis or strong.
@@ -40029,23 +39958,23 @@ const attention = {
  */
 // eslint-disable-next-line complexity
 function resolveAllAttention(events, context) {
-  let index = -1
+  let index = -1;
   /** @type {number} */
-  let open
+  let open;
   /** @type {Token} */
-  let group
+  let group;
   /** @type {Token} */
-  let text
+  let text;
   /** @type {Token} */
-  let openingSequence
+  let openingSequence;
   /** @type {Token} */
-  let closingSequence
+  let closingSequence;
   /** @type {number} */
-  let use
+  let use;
   /** @type {Array<Event>} */
-  let nextEvents
+  let nextEvents;
   /** @type {number} */
-  let offset
+  let offset;
 
   // Walk through all events.
   //
@@ -40053,138 +39982,92 @@ function resolveAllAttention(events, context) {
   // a bottleneck for malicious stuff.
   while (++index < events.length) {
     // Find a token that can close.
-    if (
-      events[index][0] === 'enter' &&
-      events[index][1].type === 'attentionSequence' &&
-      events[index][1]._close
-    ) {
-      open = index
+    if (events[index][0] === 'enter' && events[index][1].type === 'attentionSequence' && events[index][1]._close) {
+      open = index;
 
       // Now walk back to find an opener.
       while (open--) {
         // Find a token that can open the closer.
-        if (
-          events[open][0] === 'exit' &&
-          events[open][1].type === 'attentionSequence' &&
-          events[open][1]._open &&
-          // If the markers are the same:
-          context.sliceSerialize(events[open][1]).charCodeAt(0) ===
-            context.sliceSerialize(events[index][1]).charCodeAt(0)
-        ) {
+        if (events[open][0] === 'exit' && events[open][1].type === 'attentionSequence' && events[open][1]._open &&
+        // If the markers are the same:
+        context.sliceSerialize(events[open][1]).charCodeAt(0) === context.sliceSerialize(events[index][1]).charCodeAt(0)) {
           // If the opening can close or the closing can open,
           // and the close size *is not* a multiple of three,
           // but the sum of the opening and closing size *is* multiple of three,
           // then don’t match.
-          if (
-            (events[open][1]._close || events[index][1]._open) &&
-            (events[index][1].end.offset - events[index][1].start.offset) % 3 &&
-            !(
-              (events[open][1].end.offset -
-                events[open][1].start.offset +
-                events[index][1].end.offset -
-                events[index][1].start.offset) %
-              3
-            )
-          ) {
-            continue
+          if ((events[open][1]._close || events[index][1]._open) && (events[index][1].end.offset - events[index][1].start.offset) % 3 && !((events[open][1].end.offset - events[open][1].start.offset + events[index][1].end.offset - events[index][1].start.offset) % 3)) {
+            continue;
           }
 
           // Number of markers to use from the sequence.
-          use =
-            events[open][1].end.offset - events[open][1].start.offset > 1 &&
-            events[index][1].end.offset - events[index][1].start.offset > 1
-              ? 2
-              : 1
-          const start = Object.assign({}, events[open][1].end)
-          const end = Object.assign({}, events[index][1].start)
-          movePoint(start, -use)
-          movePoint(end, use)
+          use = events[open][1].end.offset - events[open][1].start.offset > 1 && events[index][1].end.offset - events[index][1].start.offset > 1 ? 2 : 1;
+          const start = Object.assign({}, events[open][1].end);
+          const end = Object.assign({}, events[index][1].start);
+          movePoint(start, -use);
+          movePoint(end, use);
           openingSequence = {
-            type: use > 1 ? 'strongSequence' : 'emphasisSequence',
+            type: use > 1 ? "strongSequence" : "emphasisSequence",
             start,
             end: Object.assign({}, events[open][1].end)
-          }
+          };
           closingSequence = {
-            type: use > 1 ? 'strongSequence' : 'emphasisSequence',
+            type: use > 1 ? "strongSequence" : "emphasisSequence",
             start: Object.assign({}, events[index][1].start),
             end
-          }
+          };
           text = {
-            type: use > 1 ? 'strongText' : 'emphasisText',
+            type: use > 1 ? "strongText" : "emphasisText",
             start: Object.assign({}, events[open][1].end),
             end: Object.assign({}, events[index][1].start)
-          }
+          };
           group = {
-            type: use > 1 ? 'strong' : 'emphasis',
+            type: use > 1 ? "strong" : "emphasis",
             start: Object.assign({}, openingSequence.start),
             end: Object.assign({}, closingSequence.end)
-          }
-          events[open][1].end = Object.assign({}, openingSequence.start)
-          events[index][1].start = Object.assign({}, closingSequence.end)
-          nextEvents = []
+          };
+          events[open][1].end = Object.assign({}, openingSequence.start);
+          events[index][1].start = Object.assign({}, closingSequence.end);
+          nextEvents = [];
 
           // If there are more markers in the opening, add them before.
           if (events[open][1].end.offset - events[open][1].start.offset) {
-            nextEvents = push(nextEvents, [
-              ['enter', events[open][1], context],
-              ['exit', events[open][1], context]
-            ])
+            nextEvents = push(nextEvents, [['enter', events[open][1], context], ['exit', events[open][1], context]]);
           }
 
           // Opening.
-          nextEvents = push(nextEvents, [
-            ['enter', group, context],
-            ['enter', openingSequence, context],
-            ['exit', openingSequence, context],
-            ['enter', text, context]
-          ])
+          nextEvents = push(nextEvents, [['enter', group, context], ['enter', openingSequence, context], ['exit', openingSequence, context], ['enter', text, context]]);
 
           // Always populated by defaults.
 
           // Between.
-          nextEvents = push(
-            nextEvents,
-            resolveAll(
-              context.parser.constructs.insideSpan.null,
-              events.slice(open + 1, index),
-              context
-            )
-          )
+          nextEvents = push(nextEvents, resolveAll(context.parser.constructs.insideSpan.null, events.slice(open + 1, index), context));
 
           // Closing.
-          nextEvents = push(nextEvents, [
-            ['exit', text, context],
-            ['enter', closingSequence, context],
-            ['exit', closingSequence, context],
-            ['exit', group, context]
-          ])
+          nextEvents = push(nextEvents, [['exit', text, context], ['enter', closingSequence, context], ['exit', closingSequence, context], ['exit', group, context]]);
 
           // If there are more markers in the closing, add them after.
           if (events[index][1].end.offset - events[index][1].start.offset) {
-            offset = 2
-            nextEvents = push(nextEvents, [
-              ['enter', events[index][1], context],
-              ['exit', events[index][1], context]
-            ])
+            offset = 2;
+            nextEvents = push(nextEvents, [['enter', events[index][1], context], ['exit', events[index][1], context]]);
           } else {
-            offset = 0
+            offset = 0;
           }
-          splice(events, open - 1, index - open + 3, nextEvents)
-          index = open + nextEvents.length - offset - 2
-          break
+          splice(events, open - 1, index - open + 3, nextEvents);
+          index = open + nextEvents.length - offset - 2;
+          break;
         }
       }
     }
   }
 
   // Remove remaining sequences.
-  index = -1
+  index = -1;
   while (++index < events.length) {
     if (events[index][1].type === 'attentionSequence') {
-      events[index][1].type = 'data'
+      events[index][1].type = 'data';
     }
   }
-  return events
+  return events;
 }
 
 /**
@@ -40192,13 +40075,13 @@ function resolveAllAttention(events, context) {
  * @type {Tokenizer}
  */
 function tokenizeAttention(effects, ok) {
-  const attentionMarkers = this.parser.constructs.attentionMarkers.null
-  const previous = this.previous
-  const before = classifyCharacter(previous)
+  const attentionMarkers = this.parser.constructs.attentionMarkers.null;
+  const previous = this.previous;
+  const before = classifyCharacter(previous);
 
   /** @type {NonNullable<Code>} */
-  let marker
-  return start
+  let marker;
+  return start;
 
   /**
    * Before a sequence.
@@ -40211,9 +40094,9 @@ function tokenizeAttention(effects, ok) {
    * @type {State}
    */
   function start(code) {
-    marker = code
-    effects.enter('attentionSequence')
-    return inside(code)
+    marker = code;
+    effects.enter('attentionSequence');
+    return inside(code);
   }
 
   /**
@@ -40228,23 +40111,21 @@ function tokenizeAttention(effects, ok) {
    */
   function inside(code) {
     if (code === marker) {
-      effects.consume(code)
-      return inside
+      effects.consume(code);
+      return inside;
     }
-    const token = effects.exit('attentionSequence')
+    const token = effects.exit('attentionSequence');
 
     // To do: next major: move this to resolver, just like `markdown-rs`.
-    const after = classifyCharacter(code)
+    const after = classifyCharacter(code);
 
     // Always populated by defaults.
 
-    const open =
-      !after || (after === 2 && before) || attentionMarkers.includes(code)
-    const close =
-      !before || (before === 2 && after) || attentionMarkers.includes(previous)
-    token._open = Boolean(marker === 42 ? open : open && (before || !close))
-    token._close = Boolean(marker === 42 ? close : close && (after || !open))
-    return ok(code)
+    const open = !after || after === 2 && before || attentionMarkers.includes(code);
+    const close = !before || before === 2 && after || attentionMarkers.includes(previous);
+    token._open = Boolean(marker === 42 ? open : open && (before || !close));
+    token._close = Boolean(marker === 42 ? close : close && (after || !open));
+    return ok(code);
   }
 }
 
@@ -40259,12 +40140,11 @@ function tokenizeAttention(effects, ok) {
  * @returns {undefined}
  */
 function movePoint(point, offset) {
-  point.column += offset
-  point.offset += offset
-  point._bufferIndex += offset
+  point.column += offset;
+  point.offset += offset;
+  point._bufferIndex += offset;
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/autolink.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/autolink.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -40277,15 +40157,15 @@ function movePoint(point, offset) {
 const autolink = {
   name: 'autolink',
   tokenize: tokenizeAutolink
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeAutolink(effects, ok, nok) {
-  let size = 0
-  return start
+  let size = 0;
+  return start;
 
   /**
    * Start of an autolink.
@@ -40300,12 +40180,12 @@ function tokenizeAutolink(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('autolink')
-    effects.enter('autolinkMarker')
-    effects.consume(code)
-    effects.exit('autolinkMarker')
-    effects.enter('autolinkProtocol')
-    return open
+    effects.enter("autolink");
+    effects.enter("autolinkMarker");
+    effects.consume(code);
+    effects.exit("autolinkMarker");
+    effects.enter("autolinkProtocol");
+    return open;
   }
 
   /**
@@ -40322,10 +40202,13 @@ function tokenizeAutolink(effects, ok, nok) {
    */
   function open(code) {
     if (asciiAlpha(code)) {
-      effects.consume(code)
-      return schemeOrEmailAtext
+      effects.consume(code);
+      return schemeOrEmailAtext;
     }
-    return emailAtext(code)
+    if (code === 64) {
+      return nok(code);
+    }
+    return emailAtext(code);
   }
 
   /**
@@ -40344,10 +40227,10 @@ function tokenizeAutolink(effects, ok, nok) {
     // ASCII alphanumeric and `+`, `-`, and `.`.
     if (code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) {
       // Count the previous alphabetical from `open` too.
-      size = 1
-      return schemeInsideOrEmailAtext(code)
+      size = 1;
+      return schemeInsideOrEmailAtext(code);
     }
-    return emailAtext(code)
+    return emailAtext(code);
   }
 
   /**
@@ -40364,21 +40247,18 @@ function tokenizeAutolink(effects, ok, nok) {
    */
   function schemeInsideOrEmailAtext(code) {
     if (code === 58) {
-      effects.consume(code)
-      size = 0
-      return urlInside
+      effects.consume(code);
+      size = 0;
+      return urlInside;
     }
 
     // ASCII alphanumeric and `+`, `-`, and `.`.
-    if (
-      (code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) &&
-      size++ < 32
-    ) {
-      effects.consume(code)
-      return schemeInsideOrEmailAtext
+    if ((code === 43 || code === 45 || code === 46 || asciiAlphanumeric(code)) && size++ < 32) {
+      effects.consume(code);
+      return schemeInsideOrEmailAtext;
     }
-    size = 0
-    return emailAtext(code)
+    size = 0;
+    return emailAtext(code);
   }
 
   /**
@@ -40393,20 +40273,20 @@ function tokenizeAutolink(effects, ok, nok) {
    */
   function urlInside(code) {
     if (code === 62) {
-      effects.exit('autolinkProtocol')
-      effects.enter('autolinkMarker')
-      effects.consume(code)
-      effects.exit('autolinkMarker')
-      effects.exit('autolink')
-      return ok
+      effects.exit("autolinkProtocol");
+      effects.enter("autolinkMarker");
+      effects.consume(code);
+      effects.exit("autolinkMarker");
+      effects.exit("autolink");
+      return ok;
     }
 
     // ASCII control, space, or `<`.
     if (code === null || code === 32 || code === 60 || asciiControl(code)) {
-      return nok(code)
+      return nok(code);
     }
-    effects.consume(code)
-    return urlInside
+    effects.consume(code);
+    return urlInside;
   }
 
   /**
@@ -40421,14 +40301,14 @@ function tokenizeAutolink(effects, ok, nok) {
    */
   function emailAtext(code) {
     if (code === 64) {
-      effects.consume(code)
-      return emailAtSignOrDot
+      effects.consume(code);
+      return emailAtSignOrDot;
     }
     if (asciiAtext(code)) {
-      effects.consume(code)
-      return emailAtext
+      effects.consume(code);
+      return emailAtext;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40442,7 +40322,7 @@ function tokenizeAutolink(effects, ok, nok) {
    * @type {State}
    */
   function emailAtSignOrDot(code) {
-    return asciiAlphanumeric(code) ? emailLabel(code) : nok(code)
+    return asciiAlphanumeric(code) ? emailLabel(code) : nok(code);
   }
 
   /**
@@ -40457,20 +40337,20 @@ function tokenizeAutolink(effects, ok, nok) {
    */
   function emailLabel(code) {
     if (code === 46) {
-      effects.consume(code)
-      size = 0
-      return emailAtSignOrDot
+      effects.consume(code);
+      size = 0;
+      return emailAtSignOrDot;
     }
     if (code === 62) {
       // Exit, then change the token type.
-      effects.exit('autolinkProtocol').type = 'autolinkEmail'
-      effects.enter('autolinkMarker')
-      effects.consume(code)
-      effects.exit('autolinkMarker')
-      effects.exit('autolink')
-      return ok
+      effects.exit("autolinkProtocol").type = "autolinkEmail";
+      effects.enter("autolinkMarker");
+      effects.consume(code);
+      effects.exit("autolinkMarker");
+      effects.exit("autolink");
+      return ok;
     }
-    return emailValue(code)
+    return emailValue(code);
   }
 
   /**
@@ -40488,15 +40368,14 @@ function tokenizeAutolink(effects, ok, nok) {
   function emailValue(code) {
     // ASCII alphanumeric or `-`.
     if ((code === 45 || asciiAlphanumeric(code)) && size++ < 63) {
-      const next = code === 45 ? emailValue : emailLabel
-      effects.consume(code)
-      return next
+      const next = code === 45 ? emailValue : emailLabel;
+      effects.consume(code);
+      return next;
     }
-    return nok(code)
+    return nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/html-text.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/html-text.js
 /**
  * @typedef {import('micromark-util-types').Code} Code
  * @typedef {import('micromark-util-types').Construct} Construct
@@ -40511,21 +40390,21 @@ function tokenizeAutolink(effects, ok, nok) {
 const htmlText = {
   name: 'htmlText',
   tokenize: tokenizeHtmlText
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeHtmlText(effects, ok, nok) {
-  const self = this
+  const self = this;
   /** @type {NonNullable<Code> | undefined} */
-  let marker
+  let marker;
   /** @type {number} */
-  let index
+  let index;
   /** @type {State} */
-  let returnState
-  return start
+  let returnState;
+  return start;
 
   /**
    * Start of HTML (text).
@@ -40538,10 +40417,10 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('htmlText')
-    effects.enter('htmlTextData')
-    effects.consume(code)
-    return open
+    effects.enter("htmlText");
+    effects.enter("htmlTextData");
+    effects.consume(code);
+    return open;
   }
 
   /**
@@ -40560,24 +40439,24 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function open(code) {
     if (code === 33) {
-      effects.consume(code)
-      return declarationOpen
+      effects.consume(code);
+      return declarationOpen;
     }
     if (code === 47) {
-      effects.consume(code)
-      return tagCloseStart
+      effects.consume(code);
+      return tagCloseStart;
     }
     if (code === 63) {
-      effects.consume(code)
-      return instruction
+      effects.consume(code);
+      return instruction;
     }
 
     // ASCII alphabetical.
     if (asciiAlpha(code)) {
-      effects.consume(code)
-      return tagOpen
+      effects.consume(code);
+      return tagOpen;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40596,19 +40475,19 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function declarationOpen(code) {
     if (code === 45) {
-      effects.consume(code)
-      return commentOpenInside
+      effects.consume(code);
+      return commentOpenInside;
     }
     if (code === 91) {
-      effects.consume(code)
-      index = 0
-      return cdataOpenInside
+      effects.consume(code);
+      index = 0;
+      return cdataOpenInside;
     }
     if (asciiAlpha(code)) {
-      effects.consume(code)
-      return declaration
+      effects.consume(code);
+      return declaration;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40623,10 +40502,10 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function commentOpenInside(code) {
     if (code === 45) {
-      effects.consume(code)
-      return commentEnd
+      effects.consume(code);
+      return commentEnd;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40641,18 +40520,18 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function comment(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 45) {
-      effects.consume(code)
-      return commentClose
+      effects.consume(code);
+      return commentClose;
     }
     if (markdownLineEnding(code)) {
-      returnState = comment
-      return lineEndingBefore(code)
+      returnState = comment;
+      return lineEndingBefore(code);
     }
-    effects.consume(code)
-    return comment
+    effects.consume(code);
+    return comment;
   }
 
   /**
@@ -40667,10 +40546,10 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function commentClose(code) {
     if (code === 45) {
-      effects.consume(code)
-      return commentEnd
+      effects.consume(code);
+      return commentEnd;
     }
-    return comment(code)
+    return comment(code);
   }
 
   /**
@@ -40684,11 +40563,7 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function commentEnd(code) {
-    return code === 62
-      ? end(code)
-      : code === 45
-      ? commentClose(code)
-      : comment(code)
+    return code === 62 ? end(code) : code === 45 ? commentClose(code) : comment(code);
   }
 
   /**
@@ -40702,12 +40577,12 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function cdataOpenInside(code) {
-    const value = 'CDATA['
+    const value = "CDATA[";
     if (code === value.charCodeAt(index++)) {
-      effects.consume(code)
-      return index === value.length ? cdata : cdataOpenInside
+      effects.consume(code);
+      return index === value.length ? cdata : cdataOpenInside;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40722,18 +40597,18 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function cdata(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 93) {
-      effects.consume(code)
-      return cdataClose
+      effects.consume(code);
+      return cdataClose;
     }
     if (markdownLineEnding(code)) {
-      returnState = cdata
-      return lineEndingBefore(code)
+      returnState = cdata;
+      return lineEndingBefore(code);
     }
-    effects.consume(code)
-    return cdata
+    effects.consume(code);
+    return cdata;
   }
 
   /**
@@ -40748,10 +40623,10 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function cdataClose(code) {
     if (code === 93) {
-      effects.consume(code)
-      return cdataEnd
+      effects.consume(code);
+      return cdataEnd;
     }
-    return cdata(code)
+    return cdata(code);
   }
 
   /**
@@ -40766,13 +40641,13 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function cdataEnd(code) {
     if (code === 62) {
-      return end(code)
+      return end(code);
     }
     if (code === 93) {
-      effects.consume(code)
-      return cdataEnd
+      effects.consume(code);
+      return cdataEnd;
     }
-    return cdata(code)
+    return cdata(code);
   }
 
   /**
@@ -40787,14 +40662,14 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function declaration(code) {
     if (code === null || code === 62) {
-      return end(code)
+      return end(code);
     }
     if (markdownLineEnding(code)) {
-      returnState = declaration
-      return lineEndingBefore(code)
+      returnState = declaration;
+      return lineEndingBefore(code);
     }
-    effects.consume(code)
-    return declaration
+    effects.consume(code);
+    return declaration;
   }
 
   /**
@@ -40809,18 +40684,18 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function instruction(code) {
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (code === 63) {
-      effects.consume(code)
-      return instructionClose
+      effects.consume(code);
+      return instructionClose;
     }
     if (markdownLineEnding(code)) {
-      returnState = instruction
-      return lineEndingBefore(code)
+      returnState = instruction;
+      return lineEndingBefore(code);
     }
-    effects.consume(code)
-    return instruction
+    effects.consume(code);
+    return instruction;
   }
 
   /**
@@ -40834,7 +40709,7 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function instructionClose(code) {
-    return code === 62 ? end(code) : instruction(code)
+    return code === 62 ? end(code) : instruction(code);
   }
 
   /**
@@ -40850,10 +40725,10 @@ function tokenizeHtmlText(effects, ok, nok) {
   function tagCloseStart(code) {
     // ASCII alphabetical.
     if (asciiAlpha(code)) {
-      effects.consume(code)
-      return tagClose
+      effects.consume(code);
+      return tagClose;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40869,10 +40744,10 @@ function tokenizeHtmlText(effects, ok, nok) {
   function tagClose(code) {
     // ASCII alphanumerical and `-`.
     if (code === 45 || asciiAlphanumeric(code)) {
-      effects.consume(code)
-      return tagClose
+      effects.consume(code);
+      return tagClose;
     }
-    return tagCloseBetween(code)
+    return tagCloseBetween(code);
   }
 
   /**
@@ -40887,14 +40762,14 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function tagCloseBetween(code) {
     if (markdownLineEnding(code)) {
-      returnState = tagCloseBetween
-      return lineEndingBefore(code)
+      returnState = tagCloseBetween;
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return tagCloseBetween
+      effects.consume(code);
+      return tagCloseBetween;
     }
-    return end(code)
+    return end(code);
   }
 
   /**
@@ -40910,13 +40785,13 @@ function tokenizeHtmlText(effects, ok, nok) {
   function tagOpen(code) {
     // ASCII alphanumerical and `-`.
     if (code === 45 || asciiAlphanumeric(code)) {
-      effects.consume(code)
-      return tagOpen
+      effects.consume(code);
+      return tagOpen;
     }
     if (code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
-      return tagOpenBetween(code)
+      return tagOpenBetween(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -40931,24 +40806,24 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function tagOpenBetween(code) {
     if (code === 47) {
-      effects.consume(code)
-      return end
+      effects.consume(code);
+      return end;
     }
 
     // ASCII alphabetical and `:` and `_`.
     if (code === 58 || code === 95 || asciiAlpha(code)) {
-      effects.consume(code)
-      return tagOpenAttributeName
+      effects.consume(code);
+      return tagOpenAttributeName;
     }
     if (markdownLineEnding(code)) {
-      returnState = tagOpenBetween
-      return lineEndingBefore(code)
+      returnState = tagOpenBetween;
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return tagOpenBetween
+      effects.consume(code);
+      return tagOpenBetween;
     }
-    return end(code)
+    return end(code);
   }
 
   /**
@@ -40963,17 +40838,11 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function tagOpenAttributeName(code) {
     // ASCII alphabetical and `-`, `.`, `:`, and `_`.
-    if (
-      code === 45 ||
-      code === 46 ||
-      code === 58 ||
-      code === 95 ||
-      asciiAlphanumeric(code)
-    ) {
-      effects.consume(code)
-      return tagOpenAttributeName
+    if (code === 45 || code === 46 || code === 58 || code === 95 || asciiAlphanumeric(code)) {
+      effects.consume(code);
+      return tagOpenAttributeName;
     }
-    return tagOpenAttributeNameAfter(code)
+    return tagOpenAttributeNameAfter(code);
   }
 
   /**
@@ -40989,18 +40858,18 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function tagOpenAttributeNameAfter(code) {
     if (code === 61) {
-      effects.consume(code)
-      return tagOpenAttributeValueBefore
+      effects.consume(code);
+      return tagOpenAttributeValueBefore;
     }
     if (markdownLineEnding(code)) {
-      returnState = tagOpenAttributeNameAfter
-      return lineEndingBefore(code)
+      returnState = tagOpenAttributeNameAfter;
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return tagOpenAttributeNameAfter
+      effects.consume(code);
+      return tagOpenAttributeNameAfter;
     }
-    return tagOpenBetween(code)
+    return tagOpenBetween(code);
   }
 
   /**
@@ -41015,30 +40884,24 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function tagOpenAttributeValueBefore(code) {
-    if (
-      code === null ||
-      code === 60 ||
-      code === 61 ||
-      code === 62 ||
-      code === 96
-    ) {
-      return nok(code)
+    if (code === null || code === 60 || code === 61 || code === 62 || code === 96) {
+      return nok(code);
     }
     if (code === 34 || code === 39) {
-      effects.consume(code)
-      marker = code
-      return tagOpenAttributeValueQuoted
+      effects.consume(code);
+      marker = code;
+      return tagOpenAttributeValueQuoted;
     }
     if (markdownLineEnding(code)) {
-      returnState = tagOpenAttributeValueBefore
-      return lineEndingBefore(code)
+      returnState = tagOpenAttributeValueBefore;
+      return lineEndingBefore(code);
     }
     if (markdownSpace(code)) {
-      effects.consume(code)
-      return tagOpenAttributeValueBefore
+      effects.consume(code);
+      return tagOpenAttributeValueBefore;
     }
-    effects.consume(code)
-    return tagOpenAttributeValueUnquoted
+    effects.consume(code);
+    return tagOpenAttributeValueUnquoted;
   }
 
   /**
@@ -41053,19 +40916,19 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function tagOpenAttributeValueQuoted(code) {
     if (code === marker) {
-      effects.consume(code)
-      marker = undefined
-      return tagOpenAttributeValueQuotedAfter
+      effects.consume(code);
+      marker = undefined;
+      return tagOpenAttributeValueQuotedAfter;
     }
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
     if (markdownLineEnding(code)) {
-      returnState = tagOpenAttributeValueQuoted
-      return lineEndingBefore(code)
+      returnState = tagOpenAttributeValueQuoted;
+      return lineEndingBefore(code);
     }
-    effects.consume(code)
-    return tagOpenAttributeValueQuoted
+    effects.consume(code);
+    return tagOpenAttributeValueQuoted;
   }
 
   /**
@@ -41079,21 +40942,14 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function tagOpenAttributeValueUnquoted(code) {
-    if (
-      code === null ||
-      code === 34 ||
-      code === 39 ||
-      code === 60 ||
-      code === 61 ||
-      code === 96
-    ) {
-      return nok(code)
+    if (code === null || code === 34 || code === 39 || code === 60 || code === 61 || code === 96) {
+      return nok(code);
     }
     if (code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
-      return tagOpenBetween(code)
+      return tagOpenBetween(code);
     }
-    effects.consume(code)
-    return tagOpenAttributeValueUnquoted
+    effects.consume(code);
+    return tagOpenAttributeValueUnquoted;
   }
 
   /**
@@ -41109,9 +40965,9 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function tagOpenAttributeValueQuotedAfter(code) {
     if (code === 47 || code === 62 || markdownLineEndingOrSpace(code)) {
-      return tagOpenBetween(code)
+      return tagOpenBetween(code);
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -41126,12 +40982,12 @@ function tokenizeHtmlText(effects, ok, nok) {
    */
   function end(code) {
     if (code === 62) {
-      effects.consume(code)
-      effects.exit('htmlTextData')
-      effects.exit('htmlText')
-      return ok
+      effects.consume(code);
+      effects.exit("htmlTextData");
+      effects.exit("htmlText");
+      return ok;
     }
-    return nok(code)
+    return nok(code);
   }
 
   /**
@@ -41149,11 +41005,11 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function lineEndingBefore(code) {
-    effects.exit('htmlTextData')
-    effects.enter('lineEnding')
-    effects.consume(code)
-    effects.exit('lineEnding')
-    return lineEndingAfter
+    effects.exit("htmlTextData");
+    effects.enter("lineEnding");
+    effects.consume(code);
+    effects.exit("lineEnding");
+    return lineEndingAfter;
   }
 
   /**
@@ -41173,16 +41029,7 @@ function tokenizeHtmlText(effects, ok, nok) {
   function lineEndingAfter(code) {
     // Always populated by defaults.
 
-    return markdownSpace(code)
-      ? factorySpace(
-          effects,
-          lineEndingAfterPrefix,
-          'linePrefix',
-          self.parser.constructs.disable.null.includes('codeIndented')
-            ? undefined
-            : 4
-        )(code)
-      : lineEndingAfterPrefix(code)
+    return markdownSpace(code) ? factorySpace(effects, lineEndingAfterPrefix, "linePrefix", self.parser.constructs.disable.null.includes('codeIndented') ? undefined : 4)(code) : lineEndingAfterPrefix(code);
   }
 
   /**
@@ -41200,12 +41047,11 @@ function tokenizeHtmlText(effects, ok, nok) {
    * @type {State}
    */
   function lineEndingAfterPrefix(code) {
-    effects.enter('htmlTextData')
-    return returnState(code)
+    effects.enter("htmlTextData");
+    return returnState(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/label-start-link.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/label-start-link.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -41220,15 +41066,15 @@ const labelStartLink = {
   name: 'labelStartLink',
   tokenize: tokenizeLabelStartLink,
   resolveAll: labelEnd.resolveAll
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeLabelStartLink(effects, ok, nok) {
-  const self = this
-  return start
+  const self = this;
+  return start;
 
   /**
    * Start of label (link) start.
@@ -41241,12 +41087,12 @@ function tokenizeLabelStartLink(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('labelLink')
-    effects.enter('labelMarker')
-    effects.consume(code)
-    effects.exit('labelMarker')
-    effects.exit('labelLink')
-    return after
+    effects.enter("labelLink");
+    effects.enter("labelMarker");
+    effects.consume(code);
+    effects.exit("labelMarker");
+    effects.exit("labelLink");
+    return after;
   }
 
   /** @type {State} */
@@ -41255,13 +41101,10 @@ function tokenizeLabelStartLink(effects, ok, nok) {
     // remove.
     // Hidden footnotes hook.
     /* c8 ignore next 3 */
-    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs
-      ? nok(code)
-      : ok(code)
+    return code === 94 && '_hiddenFootnoteSupport' in self.parser.constructs ? nok(code) : ok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/hard-break-escape.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/hard-break-escape.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').State} State
@@ -41274,14 +41117,14 @@ function tokenizeLabelStartLink(effects, ok, nok) {
 const hardBreakEscape = {
   name: 'hardBreakEscape',
   tokenize: tokenizeHardBreakEscape
-}
+};
 
 /**
  * @this {TokenizeContext}
  * @type {Tokenizer}
  */
 function tokenizeHardBreakEscape(effects, ok, nok) {
-  return start
+  return start;
 
   /**
    * Start of a hard break (escape).
@@ -41295,9 +41138,9 @@ function tokenizeHardBreakEscape(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('hardBreakEscape')
-    effects.consume(code)
-    return after
+    effects.enter("hardBreakEscape");
+    effects.consume(code);
+    return after;
   }
 
   /**
@@ -41313,14 +41156,13 @@ function tokenizeHardBreakEscape(effects, ok, nok) {
    */
   function after(code) {
     if (markdownLineEnding(code)) {
-      effects.exit('hardBreakEscape')
-      return ok(code)
+      effects.exit("hardBreakEscape");
+      return ok(code);
     }
-    return nok(code)
+    return nok(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-core-commonmark/lib/code-text.js
+;// CONCATENATED MODULE: ./node_modules/micromark-core-commonmark/lib/code-text.js
 /**
  * @typedef {import('micromark-util-types').Construct} Construct
  * @typedef {import('micromark-util-types').Previous} Previous
@@ -41338,63 +41180,55 @@ const codeText = {
   tokenize: tokenizeCodeText,
   resolve: resolveCodeText,
   previous
-}
+};
 
 // To do: next major: don’t resolve, like `markdown-rs`.
 /** @type {Resolver} */
 function resolveCodeText(events) {
-  let tailExitIndex = events.length - 4
-  let headEnterIndex = 3
+  let tailExitIndex = events.length - 4;
+  let headEnterIndex = 3;
   /** @type {number} */
-  let index
+  let index;
   /** @type {number | undefined} */
-  let enter
+  let enter;
 
   // If we start and end with an EOL or a space.
-  if (
-    (events[headEnterIndex][1].type === 'lineEnding' ||
-      events[headEnterIndex][1].type === 'space') &&
-    (events[tailExitIndex][1].type === 'lineEnding' ||
-      events[tailExitIndex][1].type === 'space')
-  ) {
-    index = headEnterIndex
+  if ((events[headEnterIndex][1].type === "lineEnding" || events[headEnterIndex][1].type === 'space') && (events[tailExitIndex][1].type === "lineEnding" || events[tailExitIndex][1].type === 'space')) {
+    index = headEnterIndex;
 
     // And we have data.
     while (++index < tailExitIndex) {
-      if (events[index][1].type === 'codeTextData') {
+      if (events[index][1].type === "codeTextData") {
         // Then we have padding.
-        events[headEnterIndex][1].type = 'codeTextPadding'
-        events[tailExitIndex][1].type = 'codeTextPadding'
-        headEnterIndex += 2
-        tailExitIndex -= 2
-        break
+        events[headEnterIndex][1].type = "codeTextPadding";
+        events[tailExitIndex][1].type = "codeTextPadding";
+        headEnterIndex += 2;
+        tailExitIndex -= 2;
+        break;
       }
     }
   }
 
   // Merge adjacent spaces and data.
-  index = headEnterIndex - 1
-  tailExitIndex++
+  index = headEnterIndex - 1;
+  tailExitIndex++;
   while (++index <= tailExitIndex) {
     if (enter === undefined) {
-      if (index !== tailExitIndex && events[index][1].type !== 'lineEnding') {
-        enter = index
+      if (index !== tailExitIndex && events[index][1].type !== "lineEnding") {
+        enter = index;
       }
-    } else if (
-      index === tailExitIndex ||
-      events[index][1].type === 'lineEnding'
-    ) {
-      events[enter][1].type = 'codeTextData'
+    } else if (index === tailExitIndex || events[index][1].type === "lineEnding") {
+      events[enter][1].type = "codeTextData";
       if (index !== enter + 2) {
-        events[enter][1].end = events[index - 1][1].end
-        events.splice(enter + 2, index - enter - 2)
-        tailExitIndex -= index - enter - 2
-        index = enter + 2
+        events[enter][1].end = events[index - 1][1].end;
+        events.splice(enter + 2, index - enter - 2);
+        tailExitIndex -= index - enter - 2;
+        index = enter + 2;
       }
-      enter = undefined
+      enter = undefined;
     }
   }
-  return events
+  return events;
 }
 
 /**
@@ -41403,10 +41237,7 @@ function resolveCodeText(events) {
  */
 function previous(code) {
   // If there is a previous code, there will always be a tail.
-  return (
-    code !== 96 ||
-    this.events[this.events.length - 1][1].type === 'characterEscape'
-  )
+  return code !== 96 || this.events[this.events.length - 1][1].type === "characterEscape";
 }
 
 /**
@@ -41414,13 +41245,13 @@ function previous(code) {
  * @type {Tokenizer}
  */
 function tokenizeCodeText(effects, ok, nok) {
-  const self = this
-  let sizeOpen = 0
+  const self = this;
+  let sizeOpen = 0;
   /** @type {number} */
-  let size
+  let size;
   /** @type {Token} */
-  let token
-  return start
+  let token;
+  return start;
 
   /**
    * Start of code (text).
@@ -41435,9 +41266,9 @@ function tokenizeCodeText(effects, ok, nok) {
    * @type {State}
    */
   function start(code) {
-    effects.enter('codeText')
-    effects.enter('codeTextSequence')
-    return sequenceOpen(code)
+    effects.enter("codeText");
+    effects.enter("codeTextSequence");
+    return sequenceOpen(code);
   }
 
   /**
@@ -41452,12 +41283,12 @@ function tokenizeCodeText(effects, ok, nok) {
    */
   function sequenceOpen(code) {
     if (code === 96) {
-      effects.consume(code)
-      sizeOpen++
-      return sequenceOpen
+      effects.consume(code);
+      sizeOpen++;
+      return sequenceOpen;
     }
-    effects.exit('codeTextSequence')
-    return between(code)
+    effects.exit("codeTextSequence");
+    return between(code);
   }
 
   /**
@@ -41473,35 +41304,35 @@ function tokenizeCodeText(effects, ok, nok) {
   function between(code) {
     // EOF.
     if (code === null) {
-      return nok(code)
+      return nok(code);
     }
 
     // To do: next major: don’t do spaces in resolve, but when compiling,
     // like `markdown-rs`.
     // Tabs don’t work, and virtual spaces don’t make sense.
     if (code === 32) {
-      effects.enter('space')
-      effects.consume(code)
-      effects.exit('space')
-      return between
+      effects.enter('space');
+      effects.consume(code);
+      effects.exit('space');
+      return between;
     }
 
     // Closing fence? Could also be data.
     if (code === 96) {
-      token = effects.enter('codeTextSequence')
-      size = 0
-      return sequenceClose(code)
+      token = effects.enter("codeTextSequence");
+      size = 0;
+      return sequenceClose(code);
     }
     if (markdownLineEnding(code)) {
-      effects.enter('lineEnding')
-      effects.consume(code)
-      effects.exit('lineEnding')
-      return between
+      effects.enter("lineEnding");
+      effects.consume(code);
+      effects.exit("lineEnding");
+      return between;
     }
 
     // Data.
-    effects.enter('codeTextData')
-    return data(code)
+    effects.enter("codeTextData");
+    return data(code);
   }
 
   /**
@@ -41515,17 +41346,12 @@ function tokenizeCodeText(effects, ok, nok) {
    * @type {State}
    */
   function data(code) {
-    if (
-      code === null ||
-      code === 32 ||
-      code === 96 ||
-      markdownLineEnding(code)
-    ) {
-      effects.exit('codeTextData')
-      return between(code)
+    if (code === null || code === 32 || code === 96 || markdownLineEnding(code)) {
+      effects.exit("codeTextData");
+      return between(code);
     }
-    effects.consume(code)
-    return data
+    effects.consume(code);
+    return data;
   }
 
   /**
@@ -41541,25 +41367,24 @@ function tokenizeCodeText(effects, ok, nok) {
   function sequenceClose(code) {
     // More.
     if (code === 96) {
-      effects.consume(code)
-      size++
-      return sequenceClose
+      effects.consume(code);
+      size++;
+      return sequenceClose;
     }
 
     // Done!
     if (size === sizeOpen) {
-      effects.exit('codeTextSequence')
-      effects.exit('codeText')
-      return ok(code)
+      effects.exit("codeTextSequence");
+      effects.exit("codeText");
+      return ok(code);
     }
 
     // More or less accents: mark as data.
-    token.type = 'codeTextData'
-    return data(code)
+    token.type = "codeTextData";
+    return data(code);
   }
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/constructs.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/constructs.js
 /**
  * @typedef {import('micromark-util-types').Extension} Extension
  */
@@ -41646,7 +41471,7 @@ const disable = {
   null: []
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/parse.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/parse.js
 /**
  * @typedef {import('micromark-util-types').Create} Create
  * @typedef {import('micromark-util-types').FullNormalizedExtension} FullNormalizedExtension
@@ -41698,7 +41523,7 @@ function parse(options) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark/lib/preprocess.js
+;// CONCATENATED MODULE: ./node_modules/micromark/lib/preprocess.js
 /**
  * @typedef {import('micromark-util-types').Chunk} Chunk
  * @typedef {import('micromark-util-types').Code} Code
@@ -41813,12 +41638,12 @@ function preprocess() {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-decode-numeric-character-reference/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-decode-numeric-character-reference/index.js
 /**
  * Turn the number (in string form as either hexa- or plain decimal) coming from
  * a numeric character reference into a character.
  *
- * Sort of like `String.fromCharCode(Number.parseInt(value, base))`, but makes
+ * Sort of like `String.fromCodePoint(Number.parseInt(value, base))`, but makes
  * non-characters and control characters safe.
  *
  * @param {string} value
@@ -41829,29 +41654,24 @@ function preprocess() {
  *   Character.
  */
 function decodeNumericCharacterReference(value, base) {
-  const code = Number.parseInt(value, base)
+  const code = Number.parseInt(value, base);
   if (
-    // C0 except for HT, LF, FF, CR, space.
-    code < 9 ||
-    code === 11 ||
-    (code > 13 && code < 32) ||
-    // Control character (DEL) of C0, and C1 controls.
-    (code > 126 && code < 160) ||
-    // Lone high surrogates and low surrogates.
-    (code > 55_295 && code < 57_344) ||
-    // Noncharacters.
-    (code > 64_975 && code < 65_008) /* eslint-disable no-bitwise */ ||
-    (code & 65_535) === 65_535 ||
-    (code & 65_535) === 65_534 /* eslint-enable no-bitwise */ ||
-    // Out of range
-    code > 1_114_111
-  ) {
-    return '\uFFFD'
+  // C0 except for HT, LF, FF, CR, space.
+  code < 9 || code === 11 || code > 13 && code < 32 ||
+  // Control character (DEL) of C0, and C1 controls.
+  code > 126 && code < 160 ||
+  // Lone high surrogates and low surrogates.
+  code > 55_295 && code < 57_344 ||
+  // Noncharacters.
+  code > 64_975 && code < 65_008 || /* eslint-disable no-bitwise */
+  (code & 65_535) === 65_535 || (code & 65_535) === 65_534 || /* eslint-enable no-bitwise */
+  // Out of range
+  code > 1_114_111) {
+    return "\uFFFD";
   }
-  return String.fromCharCode(code)
+  return String.fromCodePoint(code);
 }
-
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/micromark-util-decode-string/index.js
+;// CONCATENATED MODULE: ./node_modules/micromark-util-decode-string/index.js
 
 
 const characterEscapeOrReference =
@@ -41895,7 +41715,7 @@ function decode($0, $1, $2) {
   return decodeNamedCharacterReference($2) || $0
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/unist-util-stringify-position/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/unist-util-stringify-position/lib/index.js
 /**
  * @typedef {import('unist').Node} Node
  * @typedef {import('unist').Point} Point
@@ -41981,7 +41801,7 @@ function index(value) {
   return value && typeof value === 'number' ? value : 1
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-parse/node_modules/mdast-util-from-markdown/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-from-markdown/lib/index.js
 /**
  * @typedef {import('mdast').Break} Break
  * @typedef {import('mdast').Blockquote} Blockquote
@@ -42124,7 +41944,7 @@ function index(value) {
 
 
 
-const lib_own = {}.hasOwnProperty
+const lib_own = {}.hasOwnProperty;
 
 /**
  * Turn markdown into a syntax tree.
@@ -42151,14 +41971,10 @@ const lib_own = {}.hasOwnProperty
  */
 function fromMarkdown(value, encoding, options) {
   if (typeof encoding !== 'string') {
-    options = encoding
-    encoding = undefined
+    options = encoding;
+    encoding = undefined;
   }
-  return compiler(options)(
-    postprocess(
-      parse(options).document().write(preprocess()(value, encoding, true))
-    )
-  )
+  return compiler(options)(postprocess(parse(options).document().write(preprocess()(value, encoding, true))));
 }
 
 /**
@@ -42225,6 +42041,7 @@ function compiler(options) {
       characterReferenceMarkerHexadecimal: onexitcharacterreferencemarker,
       characterReferenceMarkerNumeric: onexitcharacterreferencemarker,
       characterReferenceValue: onexitcharacterreferencevalue,
+      characterReference: onexitcharacterreference,
       codeFenced: closer(onexitcodefenced),
       codeFencedFence: onexitcodefencedfence,
       codeFencedFenceInfo: onexitcodefencedfenceinfo,
@@ -42264,12 +42081,12 @@ function compiler(options) {
       strong: closer(),
       thematicBreak: closer()
     }
-  }
-  configure(config, (options || {}).mdastExtensions || [])
+  };
+  configure(config, (options || {}).mdastExtensions || []);
 
   /** @type {CompileData} */
-  const data = {}
-  return compile
+  const data = {};
+  return compile;
 
   /**
    * Turn micromark events into an mdast tree.
@@ -42284,7 +42101,7 @@ function compiler(options) {
     let tree = {
       type: 'root',
       children: []
-    }
+    };
     /** @type {Omit<CompileContext, 'sliceSerialize'>} */
     const context = {
       stack: [tree],
@@ -42295,76 +42112,59 @@ function compiler(options) {
       buffer,
       resume,
       data
-    }
+    };
     /** @type {Array<number>} */
-    const listStack = []
-    let index = -1
+    const listStack = [];
+    let index = -1;
     while (++index < events.length) {
       // We preprocess lists to add `listItem` tokens, and to infer whether
       // items the list itself are spread out.
-      if (
-        events[index][1].type === 'listOrdered' ||
-        events[index][1].type === 'listUnordered'
-      ) {
+      if (events[index][1].type === "listOrdered" || events[index][1].type === "listUnordered") {
         if (events[index][0] === 'enter') {
-          listStack.push(index)
+          listStack.push(index);
         } else {
-          const tail = listStack.pop()
-          index = prepareList(events, tail, index)
+          const tail = listStack.pop();
+          index = prepareList(events, tail, index);
         }
       }
     }
-    index = -1
+    index = -1;
     while (++index < events.length) {
-      const handler = config[events[index][0]]
+      const handler = config[events[index][0]];
       if (lib_own.call(handler, events[index][1].type)) {
-        handler[events[index][1].type].call(
-          Object.assign(
-            {
-              sliceSerialize: events[index][2].sliceSerialize
-            },
-            context
-          ),
-          events[index][1]
-        )
+        handler[events[index][1].type].call(Object.assign({
+          sliceSerialize: events[index][2].sliceSerialize
+        }, context), events[index][1]);
       }
     }
 
     // Handle tokens still being open.
     if (context.tokenStack.length > 0) {
-      const tail = context.tokenStack[context.tokenStack.length - 1]
-      const handler = tail[1] || defaultOnError
-      handler.call(context, undefined, tail[0])
+      const tail = context.tokenStack[context.tokenStack.length - 1];
+      const handler = tail[1] || defaultOnError;
+      handler.call(context, undefined, tail[0]);
     }
 
     // Figure out `root` position.
     tree.position = {
-      start: lib_point(
-        events.length > 0
-          ? events[0][1].start
-          : {
-              line: 1,
-              column: 1,
-              offset: 0
-            }
-      ),
-      end: lib_point(
-        events.length > 0
-          ? events[events.length - 2][1].end
-          : {
-              line: 1,
-              column: 1,
-              offset: 0
-            }
-      )
-    }
+      start: lib_point(events.length > 0 ? events[0][1].start : {
+        line: 1,
+        column: 1,
+        offset: 0
+      }),
+      end: lib_point(events.length > 0 ? events[events.length - 2][1].end : {
+        line: 1,
+        column: 1,
+        offset: 0
+      })
+    };
 
     // Call transforms.
-    index = -1
+    index = -1;
     while (++index < config.transforms.length) {
-      tree = config.transforms[index](tree) || tree
+      tree = config.transforms[index](tree) || tree;
     }
-    return tree
+    return tree;
   }
 
   /**
@@ -42374,114 +42174,90 @@ function compiler(options) {
    * @returns {number}
    */
   function prepareList(events, start, length) {
-    let index = start - 1
-    let containerBalance = -1
-    let listSpread = false
+    let index = start - 1;
+    let containerBalance = -1;
+    let listSpread = false;
     /** @type {Token | undefined} */
-    let listItem
+    let listItem;
     /** @type {number | undefined} */
-    let lineIndex
+    let lineIndex;
     /** @type {number | undefined} */
-    let firstBlankLineIndex
+    let firstBlankLineIndex;
     /** @type {boolean | undefined} */
-    let atMarker
+    let atMarker;
     while (++index <= length) {
-      const event = events[index]
+      const event = events[index];
       switch (event[1].type) {
-        case 'listUnordered':
-        case 'listOrdered':
-        case 'blockQuote': {
-          if (event[0] === 'enter') {
-            containerBalance++
-          } else {
-            containerBalance--
-          }
-          atMarker = undefined
-          break
-        }
-        case 'lineEndingBlank': {
-          if (event[0] === 'enter') {
-            if (
-              listItem &&
-              !atMarker &&
-              !containerBalance &&
-              !firstBlankLineIndex
-            ) {
-              firstBlankLineIndex = index
+        case "listUnordered":
+        case "listOrdered":
+        case "blockQuote":
+          {
+            if (event[0] === 'enter') {
+              containerBalance++;
+            } else {
+              containerBalance--;
             }
-            atMarker = undefined
+            atMarker = undefined;
+            break;
           }
-          break
-        }
-        case 'linePrefix':
-        case 'listItemValue':
-        case 'listItemMarker':
-        case 'listItemPrefix':
-        case 'listItemPrefixWhitespace': {
-          // Empty.
-
-          break
-        }
-        default: {
-          atMarker = undefined
-        }
-      }
-      if (
-        (!containerBalance &&
-          event[0] === 'enter' &&
-          event[1].type === 'listItemPrefix') ||
-        (containerBalance === -1 &&
-          event[0] === 'exit' &&
-          (event[1].type === 'listUnordered' ||
-            event[1].type === 'listOrdered'))
-      ) {
-        if (listItem) {
-          let tailIndex = index
-          lineIndex = undefined
-          while (tailIndex--) {
-            const tailEvent = events[tailIndex]
-            if (
-              tailEvent[1].type === 'lineEnding' ||
-              tailEvent[1].type === 'lineEndingBlank'
-            ) {
-              if (tailEvent[0] === 'exit') continue
-              if (lineIndex) {
-                events[lineIndex][1].type = 'lineEndingBlank'
-                listSpread = true
+        case "lineEndingBlank":
+          {
+            if (event[0] === 'enter') {
+              if (listItem && !atMarker && !containerBalance && !firstBlankLineIndex) {
+                firstBlankLineIndex = index;
               }
-              tailEvent[1].type = 'lineEnding'
-              lineIndex = tailIndex
-            } else if (
-              tailEvent[1].type === 'linePrefix' ||
-              tailEvent[1].type === 'blockQuotePrefix' ||
-              tailEvent[1].type === 'blockQuotePrefixWhitespace' ||
-              tailEvent[1].type === 'blockQuoteMarker' ||
-              tailEvent[1].type === 'listItemIndent'
-            ) {
+              atMarker = undefined;
+            }
+            break;
+          }
+        case "linePrefix":
+        case "listItemValue":
+        case "listItemMarker":
+        case "listItemPrefix":
+        case "listItemPrefixWhitespace":
+          {
+            // Empty.
+
+            break;
+          }
+        default:
+          {
+            atMarker = undefined;
+          }
+      }
+      if (!containerBalance && event[0] === 'enter' && event[1].type === "listItemPrefix" || containerBalance === -1 && event[0] === 'exit' && (event[1].type === "listUnordered" || event[1].type === "listOrdered")) {
+        if (listItem) {
+          let tailIndex = index;
+          lineIndex = undefined;
+          while (tailIndex--) {
+            const tailEvent = events[tailIndex];
+            if (tailEvent[1].type === "lineEnding" || tailEvent[1].type === "lineEndingBlank") {
+              if (tailEvent[0] === 'exit') continue;
+              if (lineIndex) {
+                events[lineIndex][1].type = "lineEndingBlank";
+                listSpread = true;
+              }
+              tailEvent[1].type = "lineEnding";
+              lineIndex = tailIndex;
+            } else if (tailEvent[1].type === "linePrefix" || tailEvent[1].type === "blockQuotePrefix" || tailEvent[1].type === "blockQuotePrefixWhitespace" || tailEvent[1].type === "blockQuoteMarker" || tailEvent[1].type === "listItemIndent") {
               // Empty
             } else {
-              break
+              break;
             }
           }
-          if (
-            firstBlankLineIndex &&
-            (!lineIndex || firstBlankLineIndex < lineIndex)
-          ) {
-            listItem._spread = true
+          if (firstBlankLineIndex && (!lineIndex || firstBlankLineIndex < lineIndex)) {
+            listItem._spread = true;
           }
 
           // Fix position.
-          listItem.end = Object.assign(
-            {},
-            lineIndex ? events[lineIndex][1].start : event[1].end
-          )
-          events.splice(lineIndex || index, 0, ['exit', listItem, event[2]])
-          index++
-          length++
+          listItem.end = Object.assign({}, lineIndex ? events[lineIndex][1].start : event[1].end);
+          events.splice(lineIndex || index, 0, ['exit', listItem, event[2]]);
+          index++;
+          length++;
         }
 
         // Create a new list item.
-        if (event[1].type === 'listItemPrefix') {
+        if (event[1].type === "listItemPrefix") {
           /** @type {Token} */
           const item = {
             type: 'listItem',
@@ -42489,18 +42265,18 @@ function compiler(options) {
             start: Object.assign({}, event[1].start),
             // @ts-expect-error: we’ll add `end` in a second.
             end: undefined
-          }
-          listItem = item
-          events.splice(index, 0, ['enter', item, event[2]])
-          index++
-          length++
-          firstBlankLineIndex = undefined
-          atMarker = true
+          };
+          listItem = item;
+          events.splice(index, 0, ['enter', item, event[2]]);
+          index++;
+          length++;
+          firstBlankLineIndex = undefined;
+          atMarker = true;
         }
       }
     }
-    events[start][1]._spread = listSpread
-    return length
+    events[start][1]._spread = listSpread;
+    return length;
   }
 
   /**
@@ -42514,7 +42290,7 @@ function compiler(options) {
    *   Handle.
    */
   function opener(create, and) {
-    return open
+    return open;
 
     /**
      * @this {CompileContext}
@@ -42522,8 +42298,8 @@ function compiler(options) {
      * @returns {undefined}
      */
     function open(token) {
-      enter.call(this, create(token), token)
-      if (and) and.call(this, token)
+      enter.call(this, create(token), token);
+      if (and) and.call(this, token);
     }
   }
 
@@ -42535,7 +42311,7 @@ function compiler(options) {
     this.stack.push({
       type: 'fragment',
       children: []
-    })
+    });
   }
 
   /**
@@ -42551,17 +42327,17 @@ function compiler(options) {
    *   Nothing.
    */
   function enter(node, token, errorHandler) {
-    const parent = this.stack[this.stack.length - 1]
+    const parent = this.stack[this.stack.length - 1];
     /** @type {Array<Nodes>} */
-    const siblings = parent.children
-    siblings.push(node)
-    this.stack.push(node)
-    this.tokenStack.push([token, errorHandler])
+    const siblings = parent.children;
+    siblings.push(node);
+    this.stack.push(node);
+    this.tokenStack.push([token, errorHandler]);
     node.position = {
       start: lib_point(token.start),
       // @ts-expect-error: `end` will be patched later.
       end: undefined
-    }
+    };
   }
 
   /**
@@ -42573,7 +42349,7 @@ function compiler(options) {
    *   Handle.
    */
   function closer(and) {
-    return close
+    return close;
 
     /**
      * @this {CompileContext}
@@ -42581,8 +42357,8 @@ function compiler(options) {
      * @returns {undefined}
      */
     function close(token) {
-      if (and) and.call(this, token)
-      exit.call(this, token)
+      if (and) and.call(this, token);
+      exit.call(this, token);
     }
   }
 
@@ -42597,28 +42373,22 @@ function compiler(options) {
    *   Nothing.
    */
   function exit(token, onExitError) {
-    const node = this.stack.pop()
-    const open = this.tokenStack.pop()
+    const node = this.stack.pop();
+    const open = this.tokenStack.pop();
     if (!open) {
-      throw new Error(
-        'Cannot close `' +
-          token.type +
-          '` (' +
-          stringifyPosition({
-            start: token.start,
-            end: token.end
-          }) +
-          '): it’s not open'
-      )
+      throw new Error('Cannot close `' + token.type + '` (' + stringifyPosition({
+        start: token.start,
+        end: token.end
+      }) + '): it’s not open');
     } else if (open[0].type !== token.type) {
       if (onExitError) {
-        onExitError.call(this, token, open[0])
+        onExitError.call(this, token, open[0]);
       } else {
-        const handler = open[1] || defaultOnError
-        handler.call(this, token, open[0])
+        const handler = open[1] || defaultOnError;
+        handler.call(this, token, open[0]);
       }
     }
-    node.position.end = lib_point(token.end)
+    node.position.end = lib_point(token.end);
   }
 
   /**
@@ -42626,7 +42396,7 @@ function compiler(options) {
    * @returns {string}
    */
   function resume() {
-    return lib_toString(this.stack.pop())
+    return lib_toString(this.stack.pop());
   }
 
   //
@@ -42638,7 +42408,7 @@ function compiler(options) {
    * @type {Handle}
    */
   function onenterlistordered() {
-    this.data.expectingFirstListItemValue = true
+    this.data.expectingFirstListItemValue = true;
   }
 
   /**
@@ -42647,9 +42417,9 @@ function compiler(options) {
    */
   function onenterlistitemvalue(token) {
     if (this.data.expectingFirstListItemValue) {
-      const ancestor = this.stack[this.stack.length - 2]
-      ancestor.start = Number.parseInt(this.sliceSerialize(token), 10)
-      this.data.expectingFirstListItemValue = undefined
+      const ancestor = this.stack[this.stack.length - 2];
+      ancestor.start = Number.parseInt(this.sliceSerialize(token), 10);
+      this.data.expectingFirstListItemValue = undefined;
     }
   }
 
@@ -42658,9 +42428,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitcodefencedfenceinfo() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.lang = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.lang = data;
   }
 
   /**
@@ -42668,9 +42438,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitcodefencedfencemeta() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.meta = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.meta = data;
   }
 
   /**
@@ -42679,9 +42449,9 @@ function compiler(options) {
    */
   function onexitcodefencedfence() {
     // Exit if this is the closing fence.
-    if (this.data.flowCodeInside) return
-    this.buffer()
-    this.data.flowCodeInside = true
+    if (this.data.flowCodeInside) return;
+    this.buffer();
+    this.data.flowCodeInside = true;
   }
 
   /**
@@ -42689,10 +42459,10 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitcodefenced() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.value = data.replace(/^(\r?\n|\r)|(\r?\n|\r)$/g, '')
-    this.data.flowCodeInside = undefined
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.value = data.replace(/^(\r?\n|\r)|(\r?\n|\r)$/g, '');
+    this.data.flowCodeInside = undefined;
   }
 
   /**
@@ -42700,9 +42470,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitcodeindented() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.value = data.replace(/(\r?\n|\r)$/g, '')
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.value = data.replace(/(\r?\n|\r)$/g, '');
   }
 
   /**
@@ -42710,12 +42480,10 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitdefinitionlabelstring(token) {
-    const label = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.label = label
-    node.identifier = normalizeIdentifier(
-      this.sliceSerialize(token)
-    ).toLowerCase()
+    const label = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.label = label;
+    node.identifier = normalizeIdentifier(this.sliceSerialize(token)).toLowerCase();
   }
 
   /**
@@ -42723,9 +42491,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitdefinitiontitlestring() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.title = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.title = data;
   }
 
   /**
@@ -42733,9 +42501,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitdefinitiondestinationstring() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.url = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.url = data;
   }
 
   /**
@@ -42743,10 +42511,10 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitatxheadingsequence(token) {
-    const node = this.stack[this.stack.length - 1]
+    const node = this.stack[this.stack.length - 1];
     if (!node.depth) {
-      const depth = this.sliceSerialize(token).length
-      node.depth = depth
+      const depth = this.sliceSerialize(token).length;
+      node.depth = depth;
     }
   }
 
@@ -42755,7 +42523,7 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitsetextheadingtext() {
-    this.data.setextHeadingSlurpLineEnding = true
+    this.data.setextHeadingSlurpLineEnding = true;
   }
 
   /**
@@ -42763,8 +42531,8 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitsetextheadinglinesequence(token) {
-    const node = this.stack[this.stack.length - 1]
-    node.depth = this.sliceSerialize(token).codePointAt(0) === 61 ? 1 : 2
+    const node = this.stack[this.stack.length - 1];
+    node.depth = this.sliceSerialize(token).codePointAt(0) === 61 ? 1 : 2;
   }
 
   /**
@@ -42772,7 +42540,7 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitsetextheading() {
-    this.data.setextHeadingSlurpLineEnding = undefined
+    this.data.setextHeadingSlurpLineEnding = undefined;
   }
 
   /**
@@ -42781,21 +42549,21 @@ function compiler(options) {
    */
 
   function onenterdata(token) {
-    const node = this.stack[this.stack.length - 1]
+    const node = this.stack[this.stack.length - 1];
     /** @type {Array<Nodes>} */
-    const siblings = node.children
-    let tail = siblings[siblings.length - 1]
+    const siblings = node.children;
+    let tail = siblings[siblings.length - 1];
     if (!tail || tail.type !== 'text') {
       // Add a new text node.
-      tail = text()
+      tail = text();
       tail.position = {
         start: lib_point(token.start),
         // @ts-expect-error: we’ll add `end` later.
         end: undefined
-      }
-      siblings.push(tail)
+      };
+      siblings.push(tail);
     }
-    this.stack.push(tail)
+    this.stack.push(tail);
   }
 
   /**
@@ -42804,9 +42572,9 @@ function compiler(options) {
    */
 
   function onexitdata(token) {
-    const tail = this.stack.pop()
-    tail.value += this.sliceSerialize(token)
-    tail.position.end = lib_point(token.end)
+    const tail = this.stack.pop();
+    tail.value += this.sliceSerialize(token);
+    tail.position.end = lib_point(token.end);
   }
 
   /**
@@ -42815,20 +42583,17 @@ function compiler(options) {
    */
 
   function onexitlineending(token) {
-    const context = this.stack[this.stack.length - 1]
+    const context = this.stack[this.stack.length - 1];
     // If we’re at a hard break, include the line ending in there.
     if (this.data.atHardBreak) {
-      const tail = context.children[context.children.length - 1]
-      tail.position.end = lib_point(token.end)
-      this.data.atHardBreak = undefined
-      return
+      const tail = context.children[context.children.length - 1];
+      tail.position.end = lib_point(token.end);
+      this.data.atHardBreak = undefined;
+      return;
     }
-    if (
-      !this.data.setextHeadingSlurpLineEnding &&
-      config.canContainEols.includes(context.type)
-    ) {
-      onenterdata.call(this, token)
-      onexitdata.call(this, token)
+    if (!this.data.setextHeadingSlurpLineEnding && config.canContainEols.includes(context.type)) {
+      onenterdata.call(this, token);
+      onexitdata.call(this, token);
     }
   }
 
@@ -42838,7 +42603,7 @@ function compiler(options) {
    */
 
   function onexithardbreak() {
-    this.data.atHardBreak = true
+    this.data.atHardBreak = true;
   }
 
   /**
@@ -42847,9 +42612,9 @@ function compiler(options) {
    */
 
   function onexithtmlflow() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.value = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.value = data;
   }
 
   /**
@@ -42858,9 +42623,9 @@ function compiler(options) {
    */
 
   function onexithtmltext() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.value = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.value = data;
   }
 
   /**
@@ -42869,9 +42634,9 @@ function compiler(options) {
    */
 
   function onexitcodetext() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.value = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.value = data;
   }
 
   /**
@@ -42880,26 +42645,27 @@ function compiler(options) {
    */
 
   function onexitlink() {
-    const node = this.stack[this.stack.length - 1]
+    const node = this.stack[this.stack.length - 1];
     // Note: there are also `identifier` and `label` fields on this link node!
     // These are used / cleaned here.
+
     // To do: clean.
     if (this.data.inReference) {
       /** @type {ReferenceType} */
-      const referenceType = this.data.referenceType || 'shortcut'
-      node.type += 'Reference'
+      const referenceType = this.data.referenceType || 'shortcut';
+      node.type += 'Reference';
       // @ts-expect-error: mutate.
-      node.referenceType = referenceType
+      node.referenceType = referenceType;
       // @ts-expect-error: mutate.
-      delete node.url
-      delete node.title
+      delete node.url;
+      delete node.title;
     } else {
       // @ts-expect-error: mutate.
-      delete node.identifier
+      delete node.identifier;
       // @ts-expect-error: mutate.
-      delete node.label
+      delete node.label;
     }
-    this.data.referenceType = undefined
+    this.data.referenceType = undefined;
   }
 
   /**
@@ -42908,26 +42674,27 @@ function compiler(options) {
    */
 
   function onexitimage() {
-    const node = this.stack[this.stack.length - 1]
+    const node = this.stack[this.stack.length - 1];
     // Note: there are also `identifier` and `label` fields on this link node!
     // These are used / cleaned here.
+
     // To do: clean.
     if (this.data.inReference) {
       /** @type {ReferenceType} */
-      const referenceType = this.data.referenceType || 'shortcut'
-      node.type += 'Reference'
+      const referenceType = this.data.referenceType || 'shortcut';
+      node.type += 'Reference';
       // @ts-expect-error: mutate.
-      node.referenceType = referenceType
+      node.referenceType = referenceType;
       // @ts-expect-error: mutate.
-      delete node.url
-      delete node.title
+      delete node.url;
+      delete node.title;
     } else {
       // @ts-expect-error: mutate.
-      delete node.identifier
+      delete node.identifier;
       // @ts-expect-error: mutate.
-      delete node.label
+      delete node.label;
     }
-    this.data.referenceType = undefined
+    this.data.referenceType = undefined;
   }
 
   /**
@@ -42936,13 +42703,13 @@ function compiler(options) {
    */
 
   function onexitlabeltext(token) {
-    const string = this.sliceSerialize(token)
-    const ancestor = this.stack[this.stack.length - 2]
+    const string = this.sliceSerialize(token);
+    const ancestor = this.stack[this.stack.length - 2];
     // @ts-expect-error: stash this on the node, as it might become a reference
     // later.
-    ancestor.label = decodeString(string)
+    ancestor.label = decodeString(string);
     // @ts-expect-error: same as above.
-    ancestor.identifier = normalizeIdentifier(string).toLowerCase()
+    ancestor.identifier = normalizeIdentifier(string).toLowerCase();
   }
 
   /**
@@ -42951,17 +42718,17 @@ function compiler(options) {
    */
 
   function onexitlabel() {
-    const fragment = this.stack[this.stack.length - 1]
-    const value = this.resume()
-    const node = this.stack[this.stack.length - 1]
+    const fragment = this.stack[this.stack.length - 1];
+    const value = this.resume();
+    const node = this.stack[this.stack.length - 1];
     // Assume a reference.
-    this.data.inReference = true
+    this.data.inReference = true;
     if (node.type === 'link') {
       /** @type {Array<PhrasingContent>} */
-      const children = fragment.children
-      node.children = children
+      const children = fragment.children;
+      node.children = children;
     } else {
-      node.alt = value
+      node.alt = value;
     }
   }
 
@@ -42971,9 +42738,9 @@ function compiler(options) {
    */
 
   function onexitresourcedestinationstring() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.url = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.url = data;
   }
 
   /**
@@ -42982,9 +42749,9 @@ function compiler(options) {
    */
 
   function onexitresourcetitlestring() {
-    const data = this.resume()
-    const node = this.stack[this.stack.length - 1]
-    node.title = data
+    const data = this.resume();
+    const node = this.stack[this.stack.length - 1];
+    node.title = data;
   }
 
   /**
@@ -42993,7 +42760,7 @@ function compiler(options) {
    */
 
   function onexitresource() {
-    this.data.inReference = undefined
+    this.data.inReference = undefined;
   }
 
   /**
@@ -43002,7 +42769,7 @@ function compiler(options) {
    */
 
   function onenterreference() {
-    this.data.referenceType = 'collapsed'
+    this.data.referenceType = 'collapsed';
   }
 
   /**
@@ -43011,16 +42778,14 @@ function compiler(options) {
    */
 
   function onexitreferencestring(token) {
-    const label = this.resume()
-    const node = this.stack[this.stack.length - 1]
+    const label = this.resume();
+    const node = this.stack[this.stack.length - 1];
     // @ts-expect-error: stash this on the node, as it might become a reference
     // later.
-    node.label = label
+    node.label = label;
     // @ts-expect-error: same as above.
-    node.identifier = normalizeIdentifier(
-      this.sliceSerialize(token)
-    ).toLowerCase()
-    this.data.referenceType = 'full'
+    node.identifier = normalizeIdentifier(this.sliceSerialize(token)).toLowerCase();
+    this.data.referenceType = 'full';
   }
 
   /**
@@ -43029,7 +42794,7 @@ function compiler(options) {
    */
 
   function onexitcharacterreferencemarker(token) {
-    this.data.characterReferenceType = token.type
+    this.data.characterReferenceType = token.type;
   }
 
   /**
@@ -43037,23 +42802,28 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitcharacterreferencevalue(token) {
-    const data = this.sliceSerialize(token)
-    const type = this.data.characterReferenceType
+    const data = this.sliceSerialize(token);
+    const type = this.data.characterReferenceType;
     /** @type {string} */
-    let value
+    let value;
     if (type) {
-      value = decodeNumericCharacterReference(
-        data,
-        type === 'characterReferenceMarkerNumeric' ? 10 : 16
-      )
-      this.data.characterReferenceType = undefined
+      value = decodeNumericCharacterReference(data, type === "characterReferenceMarkerNumeric" ? 10 : 16);
+      this.data.characterReferenceType = undefined;
     } else {
-      const result = decodeNamedCharacterReference(data)
-      value = result
+      const result = decodeNamedCharacterReference(data);
+      value = result;
     }
-    const tail = this.stack.pop()
-    tail.value += value
-    tail.position.end = lib_point(token.end)
+    const tail = this.stack[this.stack.length - 1];
+    tail.value += value;
+  }
+
+  /**
+   * @this {CompileContext}
+   * @type {Handle}
+   */
+  function onexitcharacterreference(token) {
+    const tail = this.stack.pop();
+    tail.position.end = lib_point(token.end);
   }
 
   /**
@@ -43061,9 +42831,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitautolinkprotocol(token) {
-    onexitdata.call(this, token)
-    const node = this.stack[this.stack.length - 1]
-    node.url = this.sliceSerialize(token)
+    onexitdata.call(this, token);
+    const node = this.stack[this.stack.length - 1];
+    node.url = this.sliceSerialize(token);
   }
 
   /**
@@ -43071,9 +42841,9 @@ function compiler(options) {
    * @type {Handle}
    */
   function onexitautolinkemail(token) {
-    onexitdata.call(this, token)
-    const node = this.stack[this.stack.length - 1]
-    node.url = 'mailto:' + this.sliceSerialize(token)
+    onexitdata.call(this, token);
+    const node = this.stack[this.stack.length - 1];
+    node.url = 'mailto:' + this.sliceSerialize(token);
   }
 
   //
@@ -43085,7 +42855,7 @@ function compiler(options) {
     return {
       type: 'blockquote',
       children: []
-    }
+    };
   }
 
   /** @returns {Code} */
@@ -43095,7 +42865,7 @@ function compiler(options) {
       lang: null,
       meta: null,
       value: ''
-    }
+    };
   }
 
   /** @returns {InlineCode} */
@@ -43103,7 +42873,7 @@ function compiler(options) {
     return {
       type: 'inlineCode',
       value: ''
-    }
+    };
   }
 
   /** @returns {Definition} */
@@ -43114,7 +42884,7 @@ function compiler(options) {
       label: null,
       title: null,
       url: ''
-    }
+    };
   }
 
   /** @returns {Emphasis} */
@@ -43122,7 +42892,7 @@ function compiler(options) {
     return {
       type: 'emphasis',
       children: []
-    }
+    };
   }
 
   /** @returns {Heading} */
@@ -43132,14 +42902,14 @@ function compiler(options) {
       // @ts-expect-error `depth` will be set later.
       depth: 0,
       children: []
-    }
+    };
   }
 
   /** @returns {Break} */
   function hardBreak() {
     return {
       type: 'break'
-    }
+    };
   }
 
   /** @returns {Html} */
@@ -43147,7 +42917,7 @@ function compiler(options) {
     return {
       type: 'html',
       value: ''
-    }
+    };
   }
 
   /** @returns {Image} */
@@ -43157,7 +42927,7 @@ function compiler(options) {
       title: null,
       url: '',
       alt: null
-    }
+    };
   }
 
   /** @returns {Link} */
@@ -43167,7 +42937,7 @@ function compiler(options) {
       title: null,
       url: '',
       children: []
-    }
+    };
   }
 
   /**
@@ -43181,7 +42951,7 @@ function compiler(options) {
       start: null,
       spread: token._spread,
       children: []
-    }
+    };
   }
 
   /**
@@ -43194,7 +42964,7 @@ function compiler(options) {
       spread: token._spread,
       checked: null,
       children: []
-    }
+    };
   }
 
   /** @returns {Paragraph} */
@@ -43202,7 +42972,7 @@ function compiler(options) {
     return {
       type: 'paragraph',
       children: []
-    }
+    };
   }
 
   /** @returns {Strong} */
@@ -43210,7 +42980,7 @@ function compiler(options) {
     return {
       type: 'strong',
       children: []
-    }
+    };
   }
 
   /** @returns {Text} */
@@ -43218,14 +42988,14 @@ function compiler(options) {
     return {
       type: 'text',
       value: ''
-    }
+    };
   }
 
   /** @returns {ThematicBreak} */
   function thematicBreak() {
     return {
       type: 'thematicBreak'
-    }
+    };
   }
 }
 
@@ -43242,7 +43012,7 @@ function lib_point(d) {
     line: d.line,
     column: d.column,
     offset: d.offset
-  }
+  };
 }
 
 /**
@@ -43251,13 +43021,13 @@ function lib_point(d) {
  * @returns {undefined}
  */
 function configure(combined, extensions) {
-  let index = -1
+  let index = -1;
   while (++index < extensions.length) {
-    const value = extensions[index]
+    const value = extensions[index];
     if (Array.isArray(value)) {
-      configure(combined, value)
+      configure(combined, value);
     } else {
-      extension(combined, value)
+      extension(combined, value);
     }
   }
 }
@@ -43269,32 +43039,35 @@ function configure(combined, extensions) {
  */
 function extension(combined, extension) {
   /** @type {keyof Extension} */
-  let key
+  let key;
   for (key in extension) {
     if (lib_own.call(extension, key)) {
       switch (key) {
-        case 'canContainEols': {
-          const right = extension[key]
-          if (right) {
-            combined[key].push(...right)
+        case 'canContainEols':
+          {
+            const right = extension[key];
+            if (right) {
+              combined[key].push(...right);
+            }
+            break;
           }
-          break
-        }
-        case 'transforms': {
-          const right = extension[key]
-          if (right) {
-            combined[key].push(...right)
+        case 'transforms':
+          {
+            const right = extension[key];
+            if (right) {
+              combined[key].push(...right);
+            }
+            break;
           }
-          break
-        }
         case 'enter':
-        case 'exit': {
-          const right = extension[key]
-          if (right) {
-            Object.assign(combined[key], right)
+        case 'exit':
+          {
+            const right = extension[key];
+            if (right) {
+              Object.assign(combined[key], right);
+            }
+            break;
           }
-          break
-        }
         // No default
       }
     }
@@ -43304,37 +43077,20 @@ function extension(combined, extension) {
 /** @type {OnEnterError} */
 function defaultOnError(left, right) {
   if (left) {
-    throw new Error(
-      'Cannot close `' +
-        left.type +
-        '` (' +
-        stringifyPosition({
-          start: left.start,
-          end: left.end
-        }) +
-        '): a different token (`' +
-        right.type +
-        '`, ' +
-        stringifyPosition({
-          start: right.start,
-          end: right.end
-        }) +
-        ') is open'
-    )
+    throw new Error('Cannot close `' + left.type + '` (' + stringifyPosition({
+      start: left.start,
+      end: left.end
+    }) + '): a different token (`' + right.type + '`, ' + stringifyPosition({
+      start: right.start,
+      end: right.end
+    }) + ') is open');
   } else {
-    throw new Error(
-      'Cannot close document, a token (`' +
-        right.type +
-        '`, ' +
-        stringifyPosition({
-          start: right.start,
-          end: right.end
-        }) +
-        ') is still open'
-    )
+    throw new Error('Cannot close document, a token (`' + right.type + '`, ' + stringifyPosition({
+      start: right.start,
+      end: right.end
+    }) + ') is still open');
   }
 }
-
 ;// CONCATENATED MODULE: ./node_modules/remark-parse/lib/index.js
 /**
  * @typedef {import('mdast').Root} Root
@@ -43500,7 +43256,7 @@ function zwitch(key, options) {
   return one
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/configure.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/configure.js
 /**
  * @typedef {import('./types.js').Options} Options
  * @typedef {import('./types.js').State} State
@@ -43582,7 +43338,7 @@ function map(left, right) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/blockquote.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/blockquote.js
 /**
  * @typedef {import('mdast').Blockquote} Blockquote
  * @typedef {import('mdast').Parents} Parents
@@ -43616,7 +43372,7 @@ function blockquote_map(line, _, blank) {
   return '>' + (blank ? '' : ' ') + line
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/pattern-in-scope.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/pattern-in-scope.js
 /**
  * @typedef {import('../types.js').ConstructName} ConstructName
  * @typedef {import('../types.js').Unsafe} Unsafe
@@ -43660,7 +43416,7 @@ function listInScope(stack, list, none) {
   return false
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/break.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/break.js
 /**
  * @typedef {import('mdast').Break} Break
  * @typedef {import('mdast').Parents} Parents
@@ -43732,7 +43488,7 @@ function longestStreak(value, substring) {
   return max
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/format-code-as-indented.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/format-code-as-indented.js
 /**
  * @typedef {import('mdast').Code} Code
  * @typedef {import('../types.js').State} State
@@ -43756,7 +43512,7 @@ function formatCodeAsIndented(node, state) {
   )
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-fence.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-fence.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -43780,7 +43536,7 @@ function checkFence(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/code.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/code.js
 /**
  * @typedef {import('mdast').Code} Code
  * @typedef {import('mdast').Parents} Parents
@@ -43860,7 +43616,7 @@ function code_map(line, _, blank) {
   return (blank ? '' : '    ') + line
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-quote.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-quote.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -43884,7 +43640,7 @@ function checkQuote(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/definition.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/definition.js
 /**
  * @typedef {import('mdast').Definition} Definition
  * @typedef {import('mdast').Parents} Parents
@@ -43964,7 +43720,7 @@ function definition_definition(node, _, state, info) {
   return value
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-emphasis.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-emphasis.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -43988,7 +43744,7 @@ function checkEmphasis(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/emphasis.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/emphasis.js
 /**
  * @typedef {import('mdast').Emphasis} Emphasis
  * @typedef {import('mdast').Parents} Parents
@@ -44038,7 +43794,7 @@ function emphasisPeek(_, _1, state) {
   return state.options.emphasis || '*'
 }
 
-;// CONCATENATED MODULE: ./node_modules/unist-util-visit-parents/node_modules/unist-util-is/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/unist-util-is/lib/index.js
 /**
  * @typedef {import('unist').Node} Node
  * @typedef {import('unist').Parent} Parent
@@ -45055,117 +44811,7 @@ function visit(tree, testOrVisitor, visitorOrReverse, maybeReverse) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-string/lib/index.js
-/**
- * @typedef {import('mdast').Nodes} Nodes
- *
- * @typedef Options
- *   Configuration (optional).
- * @property {boolean | null | undefined} [includeImageAlt=true]
- *   Whether to use `alt` for `image`s (default: `true`).
- * @property {boolean | null | undefined} [includeHtml=true]
- *   Whether to use `value` of HTML (default: `true`).
- */
-
-/** @type {Options} */
-const lib_emptyOptions = {}
-
-/**
- * Get the text content of a node or list of nodes.
- *
- * Prefers the node’s plain-text fields, otherwise serializes its children,
- * and if the given value is an array, serialize the nodes in it.
- *
- * @param {unknown} [value]
- *   Thing to serialize, typically `Node`.
- * @param {Options | null | undefined} [options]
- *   Configuration (optional).
- * @returns {string}
- *   Serialized `value`.
- */
-function mdast_util_to_string_lib_toString(value, options) {
-  const settings = options || lib_emptyOptions
-  const includeImageAlt =
-    typeof settings.includeImageAlt === 'boolean'
-      ? settings.includeImageAlt
-      : true
-  const includeHtml =
-    typeof settings.includeHtml === 'boolean' ? settings.includeHtml : true
-
-  return lib_one(value, includeImageAlt, includeHtml)
-}
-
-/**
- * One node or several nodes.
- *
- * @param {unknown} value
- *   Thing to serialize.
- * @param {boolean} includeImageAlt
- *   Include image `alt`s.
- * @param {boolean} includeHtml
- *   Include HTML.
- * @returns {string}
- *   Serialized node.
- */
-function lib_one(value, includeImageAlt, includeHtml) {
-  if (lib_node(value)) {
-    if ('value' in value) {
-      return value.type === 'html' && !includeHtml ? '' : value.value
-    }
-
-    if (includeImageAlt && 'alt' in value && value.alt) {
-      return value.alt
-    }
-
-    if ('children' in value) {
-      return mdast_util_to_string_lib_all(value.children, includeImageAlt, includeHtml)
-    }
-  }
-
-  if (Array.isArray(value)) {
-    return mdast_util_to_string_lib_all(value, includeImageAlt, includeHtml)
-  }
-
-  return ''
-}
-
-/**
- * Serialize a list of nodes.
- *
- * @param {Array<unknown>} values
- *   Thing to serialize.
- * @param {boolean} includeImageAlt
- *   Include image `alt`s.
- * @param {boolean} includeHtml
- *   Include HTML.
- * @returns {string}
- *   Serialized nodes.
- */
-function mdast_util_to_string_lib_all(values, includeImageAlt, includeHtml) {
-  /** @type {Array<string>} */
-  const result = []
-  let index = -1
-
-  while (++index < values.length) {
-    result[index] = lib_one(values[index], includeImageAlt, includeHtml)
-  }
-
-  return result.join('')
-}
-
-/**
- * Check if `value` looks like a node.
- *
- * @param {unknown} value
- *   Thing.
- * @returns {value is Nodes}
- *   Whether `value` is a node.
- */
-function lib_node(value) {
-  return Boolean(value && typeof value === 'object')
-}
-
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/format-heading-as-setext.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/format-heading-as-setext.js
 /**
  * @typedef {import('mdast').Heading} Heading
  * @typedef {import('../types.js').State} State
@@ -45196,12 +44842,12 @@ function formatHeadingAsSetext(node, state) {
 
   return Boolean(
     (!node.depth || node.depth < 3) &&
-      mdast_util_to_string_lib_toString(node) &&
+      lib_toString(node) &&
       (state.options.setext || literalWithBreak)
   )
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/heading.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/heading.js
 /**
  * @typedef {import('mdast').Heading} Heading
  * @typedef {import('mdast').Parents} Parents
@@ -45283,7 +44929,7 @@ function heading(node, _, state, info) {
   return value
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/html.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/html.js
 /**
  * @typedef {import('mdast').Html} Html
  */
@@ -45305,7 +44951,7 @@ function htmlPeek() {
   return '<'
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/image.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/image.js
 /**
  * @typedef {import('mdast').Image} Image
  * @typedef {import('mdast').Parents} Parents
@@ -45391,7 +45037,7 @@ function imagePeek() {
   return '!'
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/image-reference.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/image-reference.js
 /**
  * @typedef {import('mdast').ImageReference} ImageReference
  * @typedef {import('mdast').Parents} Parents
@@ -45458,7 +45104,7 @@ function imageReferencePeek() {
   return '!'
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/inline-code.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/inline-code.js
 /**
  * @typedef {import('mdast').InlineCode} InlineCode
  * @typedef {import('mdast').Parents} Parents
@@ -45537,7 +45183,7 @@ function inlineCodePeek() {
   return '`'
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/format-link-as-autolink.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/format-link-as-autolink.js
 /**
  * @typedef {import('mdast').Link} Link
  * @typedef {import('../types.js').State} State
@@ -45551,7 +45197,7 @@ function inlineCodePeek() {
  * @returns {boolean}
  */
 function formatLinkAsAutolink(node, state) {
-  const raw = mdast_util_to_string_lib_toString(node)
+  const raw = lib_toString(node)
 
   return Boolean(
     !state.options.resourceLink &&
@@ -45573,7 +45219,7 @@ function formatLinkAsAutolink(node, state) {
   )
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/link.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/link.js
 /**
  * @typedef {import('mdast').Link} Link
  * @typedef {import('mdast').Parents} Parents
@@ -45691,7 +45337,7 @@ function linkPeek(node, _, state) {
   return formatLinkAsAutolink(node, state) ? '<' : '['
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/link-reference.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/link-reference.js
 /**
  * @typedef {import('mdast').LinkReference} LinkReference
  * @typedef {import('mdast').Parents} Parents
@@ -45758,7 +45404,7 @@ function linkReferencePeek() {
   return '['
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-bullet.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-bullet.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -45782,7 +45428,7 @@ function checkBullet(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-bullet-other.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-bullet-other.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -45823,7 +45469,7 @@ function checkBulletOther(state) {
   return bulletOther
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-bullet-ordered.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-bullet-ordered.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -45847,7 +45493,7 @@ function checkBulletOrdered(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-rule.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-rule.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -45871,7 +45517,7 @@ function checkRule(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/list.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/list.js
 /**
  * @typedef {import('mdast').List} List
  * @typedef {import('mdast').Parents} Parents
@@ -45975,7 +45621,7 @@ function list_list(node, parent, state, info) {
   return value
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-list-item-indent.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-list-item-indent.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -45999,7 +45645,7 @@ function checkListItemIndent(state) {
   return style
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/list-item.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/list-item.js
 /**
  * @typedef {import('mdast').ListItem} ListItem
  * @typedef {import('mdast').Parents} Parents
@@ -46066,7 +45712,7 @@ function listItem(node, parent, state, info) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/paragraph.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/paragraph.js
 /**
  * @typedef {import('mdast').Paragraph} Paragraph
  * @typedef {import('mdast').Parents} Parents
@@ -46090,301 +45736,9 @@ function paragraph(node, _, state, info) {
   return value
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/unist-util-is/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-phrasing/lib/index.js
 /**
- * @typedef {import('unist').Node} Node
- * @typedef {import('unist').Parent} Parent
- */
-
-/**
- * @template Fn
- * @template Fallback
- * @typedef {Fn extends (value: any) => value is infer Thing ? Thing : Fallback} Predicate
- */
-
-/**
- * @callback Check
- *   Check that an arbitrary value is a node.
- * @param {unknown} this
- *   The given context.
- * @param {unknown} [node]
- *   Anything (typically a node).
- * @param {number | null | undefined} [index]
- *   The node’s position in its parent.
- * @param {Parent | null | undefined} [parent]
- *   The node’s parent.
- * @returns {boolean}
- *   Whether this is a node and passes a test.
- *
- * @typedef {Record<string, unknown> | Node} Props
- *   Object to check for equivalence.
- *
- *   Note: `Node` is included as it is common but is not indexable.
- *
- * @typedef {Array<Props | TestFunction | string> | Props | TestFunction | string | null | undefined} Test
- *   Check for an arbitrary node.
- *
- * @callback TestFunction
- *   Check if a node passes a test.
- * @param {unknown} this
- *   The given context.
- * @param {Node} node
- *   A node.
- * @param {number | undefined} [index]
- *   The node’s position in its parent.
- * @param {Parent | undefined} [parent]
- *   The node’s parent.
- * @returns {boolean | undefined | void}
- *   Whether this node passes the test.
- *
- *   Note: `void` is included until TS sees no return as `undefined`.
- */
-
-/**
- * Check if `node` is a `Node` and whether it passes the given test.
- *
- * @param {unknown} node
- *   Thing to check, typically `Node`.
- * @param {Test} test
- *   A check for a specific node.
- * @param {number | null | undefined} index
- *   The node’s position in its parent.
- * @param {Parent | null | undefined} parent
- *   The node’s parent.
- * @param {unknown} context
- *   Context object (`this`) to pass to `test` functions.
- * @returns {boolean}
- *   Whether `node` is a node and passes a test.
- */
-const lib_is =
-  // Note: overloads in JSDoc can’t yet use different `@template`s.
-  /**
-   * @type {(
-   *   (<Condition extends string>(node: unknown, test: Condition, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node & {type: Condition}) &
-   *   (<Condition extends Props>(node: unknown, test: Condition, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node & Condition) &
-   *   (<Condition extends TestFunction>(node: unknown, test: Condition, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node & Predicate<Condition, Node>) &
-   *   ((node?: null | undefined) => false) &
-   *   ((node: unknown, test?: null | undefined, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node) &
-   *   ((node: unknown, test?: Test, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => boolean)
-   * )}
-   */
-  (
-    /**
-     * @param {unknown} [node]
-     * @param {Test} [test]
-     * @param {number | null | undefined} [index]
-     * @param {Parent | null | undefined} [parent]
-     * @param {unknown} [context]
-     * @returns {boolean}
-     */
-    // eslint-disable-next-line max-params
-    function (node, test, index, parent, context) {
-      const check = lib_convert(test)
-
-      if (
-        index !== undefined &&
-        index !== null &&
-        (typeof index !== 'number' ||
-          index < 0 ||
-          index === Number.POSITIVE_INFINITY)
-      ) {
-        throw new Error('Expected positive finite index')
-      }
-
-      if (
-        parent !== undefined &&
-        parent !== null &&
-        (!lib_is(parent) || !parent.children)
-      ) {
-        throw new Error('Expected parent node')
-      }
-
-      if (
-        (parent === undefined || parent === null) !==
-        (index === undefined || index === null)
-      ) {
-        throw new Error('Expected both parent and index')
-      }
-
-      return lib_looksLikeANode(node)
-        ? check.call(context, node, index, parent)
-        : false
-    }
-  )
-
-/**
- * Generate an assertion from a test.
- *
- * Useful if you’re going to test many nodes, for example when creating a
- * utility where something else passes a compatible test.
- *
- * The created function is a bit faster because it expects valid input only:
- * a `node`, `index`, and `parent`.
- *
- * @param {Test} test
- *   *   when nullish, checks if `node` is a `Node`.
- *   *   when `string`, works like passing `(node) => node.type === test`.
- *   *   when `function` checks if function passed the node is true.
- *   *   when `object`, checks that all keys in test are in node, and that they have (strictly) equal values.
- *   *   when `array`, checks if any one of the subtests pass.
- * @returns {Check}
- *   An assertion.
- */
-const lib_convert =
-  // Note: overloads in JSDoc can’t yet use different `@template`s.
-  /**
-   * @type {(
-   *   (<Condition extends string>(test: Condition) => (node: unknown, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node & {type: Condition}) &
-   *   (<Condition extends Props>(test: Condition) => (node: unknown, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node & Condition) &
-   *   (<Condition extends TestFunction>(test: Condition) => (node: unknown, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node & Predicate<Condition, Node>) &
-   *   ((test?: null | undefined) => (node?: unknown, index?: number | null | undefined, parent?: Parent | null | undefined, context?: unknown) => node is Node) &
-   *   ((test?: Test) => Check)
-   * )}
-   */
-  (
-    /**
-     * @param {Test} [test]
-     * @returns {Check}
-     */
-    function (test) {
-      if (test === null || test === undefined) {
-        return lib_ok
-      }
-
-      if (typeof test === 'function') {
-        return lib_castFactory(test)
-      }
-
-      if (typeof test === 'object') {
-        return Array.isArray(test) ? lib_anyFactory(test) : lib_propsFactory(test)
-      }
-
-      if (typeof test === 'string') {
-        return lib_typeFactory(test)
-      }
-
-      throw new Error('Expected function, string, or object as test')
-    }
-  )
-
-/**
- * @param {Array<Props | TestFunction | string>} tests
- * @returns {Check}
- */
-function lib_anyFactory(tests) {
-  /** @type {Array<Check>} */
-  const checks = []
-  let index = -1
-
-  while (++index < tests.length) {
-    checks[index] = lib_convert(tests[index])
-  }
-
-  return lib_castFactory(any)
-
-  /**
-   * @this {unknown}
-   * @type {TestFunction}
-   */
-  function any(...parameters) {
-    let index = -1
-
-    while (++index < checks.length) {
-      if (checks[index].apply(this, parameters)) return true
-    }
-
-    return false
-  }
-}
-
-/**
- * Turn an object into a test for a node with a certain fields.
- *
- * @param {Props} check
- * @returns {Check}
- */
-function lib_propsFactory(check) {
-  const checkAsRecord = /** @type {Record<string, unknown>} */ (check)
-
-  return lib_castFactory(all)
-
-  /**
-   * @param {Node} node
-   * @returns {boolean}
-   */
-  function all(node) {
-    const nodeAsRecord = /** @type {Record<string, unknown>} */ (
-      /** @type {unknown} */ (node)
-    )
-
-    /** @type {string} */
-    let key
-
-    for (key in check) {
-      if (nodeAsRecord[key] !== checkAsRecord[key]) return false
-    }
-
-    return true
-  }
-}
-
-/**
- * Turn a string into a test for a node with a certain type.
- *
- * @param {string} check
- * @returns {Check}
- */
-function lib_typeFactory(check) {
-  return lib_castFactory(type)
-
-  /**
-   * @param {Node} node
-   */
-  function type(node) {
-    return node && node.type === check
-  }
-}
-
-/**
- * Turn a custom test into a test for a node that passes that test.
- *
- * @param {TestFunction} testFunction
- * @returns {Check}
- */
-function lib_castFactory(testFunction) {
-  return check
-
-  /**
-   * @this {unknown}
-   * @type {Check}
-   */
-  function check(value, index, parent) {
-    return Boolean(
-      lib_looksLikeANode(value) &&
-        testFunction.call(
-          this,
-          value,
-          typeof index === 'number' ? index : undefined,
-          parent || undefined
-        )
-    )
-  }
-}
-
-function lib_ok() {
-  return true
-}
-
-/**
- * @param {unknown} value
- * @returns {value is Node}
- */
-function lib_looksLikeANode(value) {
-  return value !== null && typeof value === 'object' && 'type' in value
-}
-
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-phrasing/lib/index.js
-/**
+ * @typedef {import('mdast').Html} Html
  * @typedef {import('mdast').PhrasingContent} PhrasingContent
  */
 
@@ -46402,25 +45756,34 @@ function lib_looksLikeANode(value) {
  */
 
 const phrasing =
-  /** @type {(node?: unknown) => node is PhrasingContent} */
+  /** @type {(node?: unknown) => node is Exclude<PhrasingContent, Html>} */
   (
-    lib_convert([
+    convert([
       'break',
       'delete',
       'emphasis',
+      // To do: next major: removed since footnotes were added to GFM.
       'footnote',
       'footnoteReference',
       'image',
       'imageReference',
       'inlineCode',
+      // Enabled by `mdast-util-math`:
+      'inlineMath',
       'link',
       'linkReference',
+      // Enabled by `mdast-util-mdx`:
+      'mdxJsxTextElement',
+      // Enabled by `mdast-util-mdx`:
+      'mdxTextExpression',
       'strong',
-      'text'
+      'text',
+      // Enabled by `mdast-util-directive`:
+      'textDirective'
     ])
   )
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/root.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/root.js
 /**
  * @typedef {import('mdast').Parents} Parents
  * @typedef {import('mdast').Root} Root
@@ -46446,7 +45809,7 @@ function root(node, _, state, info) {
   return fn.call(state, node, info)
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-strong.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-strong.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -46470,7 +45833,7 @@ function checkStrong(state) {
   return marker
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/strong.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/strong.js
 /**
  * @typedef {import('mdast').Parents} Parents
  * @typedef {import('mdast').Strong} Strong
@@ -46520,7 +45883,7 @@ function strongPeek(_, _1, state) {
   return state.options.strong || '*'
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/text.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/text.js
 /**
  * @typedef {import('mdast').Parents} Parents
  * @typedef {import('mdast').Text} Text
@@ -46539,7 +45902,7 @@ function handle_text_text(node, _, state, info) {
   return state.safe(node.value, info)
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/check-rule-repetition.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/check-rule-repetition.js
 /**
  * @typedef {import('../types.js').Options} Options
  * @typedef {import('../types.js').State} State
@@ -46563,7 +45926,7 @@ function checkRuleRepetition(state) {
   return repetition
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/thematic-break.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/thematic-break.js
 /**
  * @typedef {import('mdast').Parents} Parents
  * @typedef {import('mdast').ThematicBreak} ThematicBreak
@@ -46587,7 +45950,7 @@ function thematic_break_thematicBreak(_, _1, state) {
   return state.options.ruleSpaces ? value.slice(0, -1) : value
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/handle/index.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/handle/index.js
 
 
 
@@ -46634,7 +45997,7 @@ const handle = {
   thematicBreak: thematic_break_thematicBreak
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/join.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/join.js
 /**
  * @typedef {import('./types.js').Join} Join
  */
@@ -46675,7 +46038,7 @@ function joinDefaults(left, right, parent, state) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/unsafe.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/unsafe.js
 /**
  * @typedef {import('./types.js').ConstructName} ConstructName
  * @typedef {import('./types.js').Unsafe} Unsafe
@@ -46824,89 +46187,7 @@ const unsafe = [
   {atBreak: true, character: '~'}
 ]
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/micromark-util-decode-numeric-character-reference/index.js
-/**
- * Turn the number (in string form as either hexa- or plain decimal) coming from
- * a numeric character reference into a character.
- *
- * Sort of like `String.fromCharCode(Number.parseInt(value, base))`, but makes
- * non-characters and control characters safe.
- *
- * @param {string} value
- *   Value to decode.
- * @param {number} base
- *   Numeric base.
- * @returns {string}
- *   Character.
- */
-function micromark_util_decode_numeric_character_reference_decodeNumericCharacterReference(value, base) {
-  const code = Number.parseInt(value, base)
-  if (
-    // C0 except for HT, LF, FF, CR, space.
-    code < 9 ||
-    code === 11 ||
-    (code > 13 && code < 32) ||
-    // Control character (DEL) of C0, and C1 controls.
-    (code > 126 && code < 160) ||
-    // Lone high surrogates and low surrogates.
-    (code > 55_295 && code < 57_344) ||
-    // Noncharacters.
-    (code > 64_975 && code < 65_008) /* eslint-disable no-bitwise */ ||
-    (code & 65_535) === 65_535 ||
-    (code & 65_535) === 65_534 /* eslint-enable no-bitwise */ ||
-    // Out of range
-    code > 1_114_111
-  ) {
-    return '\uFFFD'
-  }
-  return String.fromCharCode(code)
-}
-
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/micromark-util-decode-string/index.js
-
-
-const micromark_util_decode_string_characterEscapeOrReference =
-  /\\([!-/:-@[-`{-~])|&(#(?:\d{1,7}|x[\da-f]{1,6})|[\da-z]{1,31});/gi
-
-/**
- * Decode markdown strings (which occur in places such as fenced code info
- * strings, destinations, labels, and titles).
- *
- * The “string” content type allows character escapes and -references.
- * This decodes those.
- *
- * @param {string} value
- *   Value to decode.
- * @returns {string}
- *   Decoded value.
- */
-function micromark_util_decode_string_decodeString(value) {
-  return value.replace(micromark_util_decode_string_characterEscapeOrReference, micromark_util_decode_string_decode)
-}
-
-/**
- * @param {string} $0
- * @param {string} $1
- * @param {string} $2
- * @returns {string}
- */
-function micromark_util_decode_string_decode($0, $1, $2) {
-  if ($1) {
-    // Escape.
-    return $1
-  }
-
-  // Reference.
-  const head = $2.charCodeAt(0)
-  if (head === 35) {
-    const head = $2.charCodeAt(1)
-    const hex = head === 120 || head === 88
-    return micromark_util_decode_numeric_character_reference_decodeNumericCharacterReference($2.slice(hex ? 2 : 1), hex ? 16 : 10)
-  }
-  return decodeNamedCharacterReference($2) || $0
-}
-
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/association.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/association.js
 /**
  * @typedef {import('../types.js').AssociationId} AssociationId
  */
@@ -46938,10 +46219,10 @@ function association(node) {
     return node.label || ''
   }
 
-  return micromark_util_decode_string_decodeString(node.identifier)
+  return decodeString(node.identifier)
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/compile-pattern.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/compile-pattern.js
 /**
  * @typedef {import('../types.js').CompilePattern} CompilePattern
  */
@@ -46967,7 +46248,7 @@ function compilePattern(pattern) {
   return pattern._compiled
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/container-phrasing.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/container-phrasing.js
 /**
  * @typedef {import('../types.js').Handle} Handle
  * @typedef {import('../types.js').Info} Info
@@ -47065,7 +46346,7 @@ function containerPhrasing(parent, state, info) {
   return results.join('')
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/container-flow.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/container-flow.js
 /**
  * @typedef {import('../types.js').FlowParents} FlowParents
  * @typedef {import('../types.js').FlowChildren} FlowChildren
@@ -47153,7 +46434,7 @@ function between(left, right, parent, state) {
   return '\n\n'
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/indent-lines.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/indent-lines.js
 /**
  * @typedef {import('../types.js').IndentLines} IndentLines
  */
@@ -47190,7 +46471,7 @@ function indentLines(value, map) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/safe.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/safe.js
 /**
  * @typedef {import('../types.js').SafeConfig} SafeConfig
  * @typedef {import('../types.js').State} State
@@ -47368,7 +46649,7 @@ function escapeBackslashes(value, after) {
   return results.join('')
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/util/track.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/util/track.js
 /**
  * @typedef {import('../types.js').CreateTracker} CreateTracker
  * @typedef {import('../types.js').TrackCurrent} TrackCurrent
@@ -47428,7 +46709,7 @@ function track(config) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark-stringify/node_modules/mdast-util-to-markdown/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/mdast-util-to-markdown/lib/index.js
 /**
  * @typedef {import('mdast').Nodes} Nodes
  * @typedef {import('./types.js').Enter} Enter
@@ -47866,93 +47147,7 @@ function wrap(middleware, callback) {
   }
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark/node_modules/unist-util-stringify-position/lib/index.js
-/**
- * @typedef {import('unist').Node} Node
- * @typedef {import('unist').Point} Point
- * @typedef {import('unist').Position} Position
- */
-
-/**
- * @typedef NodeLike
- * @property {string} type
- * @property {PositionLike | null | undefined} [position]
- *
- * @typedef PointLike
- * @property {number | null | undefined} [line]
- * @property {number | null | undefined} [column]
- * @property {number | null | undefined} [offset]
- *
- * @typedef PositionLike
- * @property {PointLike | null | undefined} [start]
- * @property {PointLike | null | undefined} [end]
- */
-
-/**
- * Serialize the positional info of a point, position (start and end points),
- * or node.
- *
- * @param {Node | NodeLike | Point | PointLike | Position | PositionLike | null | undefined} [value]
- *   Node, position, or point.
- * @returns {string}
- *   Pretty printed positional info of a node (`string`).
- *
- *   In the format of a range `ls:cs-le:ce` (when given `node` or `position`)
- *   or a point `l:c` (when given `point`), where `l` stands for line, `c` for
- *   column, `s` for `start`, and `e` for end.
- *   An empty string (`''`) is returned if the given value is neither `node`,
- *   `position`, nor `point`.
- */
-function lib_stringifyPosition(value) {
-  // Nothing.
-  if (!value || typeof value !== 'object') {
-    return ''
-  }
-
-  // Node.
-  if ('position' in value || 'type' in value) {
-    return lib_position(value.position)
-  }
-
-  // Position.
-  if ('start' in value || 'end' in value) {
-    return lib_position(value)
-  }
-
-  // Point.
-  if ('line' in value || 'column' in value) {
-    return unist_util_stringify_position_lib_point(value)
-  }
-
-  // ?
-  return ''
-}
-
-/**
- * @param {Point | PointLike | null | undefined} point
- * @returns {string}
- */
-function unist_util_stringify_position_lib_point(point) {
-  return lib_index(point && point.line) + ':' + lib_index(point && point.column)
-}
-
-/**
- * @param {Position | PositionLike | null | undefined} pos
- * @returns {string}
- */
-function lib_position(pos) {
-  return unist_util_stringify_position_lib_point(pos && pos.start) + '-' + unist_util_stringify_position_lib_point(pos && pos.end)
-}
-
-/**
- * @param {number | null | undefined} value
- * @returns {number}
- */
-function lib_index(value) {
-  return value && typeof value === 'number' ? value : 1
-}
-
-;// CONCATENATED MODULE: ./node_modules/remark/node_modules/vfile-message/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/vfile-message/lib/index.js
 /**
  * @typedef {import('unist').Node} Node
  * @typedef {import('unist').Point} Point
@@ -48175,7 +47370,7 @@ class VFileMessage extends Error {
      * On normal errors, this would be something like `ParseError`, buit in
      * `VFile` messages we use this space to show where an error happened.
      */
-    this.name = lib_stringifyPosition(options.place) || '1:1'
+    this.name = stringifyPosition(options.place) || '1:1'
 
     /**
      * Place of message.
@@ -48276,7 +47471,7 @@ VFileMessage.prototype.source = undefined
 const external_node_path_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:path");
 ;// CONCATENATED MODULE: external "node:process"
 const external_node_process_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:process");
-;// CONCATENATED MODULE: ./node_modules/remark/node_modules/vfile/lib/minurl.shared.js
+;// CONCATENATED MODULE: ./node_modules/vfile/lib/minurl.shared.js
 /**
  * Checks if a value has the shape of a WHATWG URL object.
  *
@@ -48311,7 +47506,7 @@ function isUrl(fileUrlOrPath) {
 
 ;// CONCATENATED MODULE: external "node:url"
 const external_node_url_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:url");
-;// CONCATENATED MODULE: ./node_modules/remark/node_modules/vfile/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/vfile/lib/index.js
 /**
  * @typedef {import('unist').Node} Node
  * @typedef {import('unist').Point} Point
@@ -49016,7 +48211,7 @@ function isUint8Array(value) {
   )
 }
 
-;// CONCATENATED MODULE: ./node_modules/remark/node_modules/unified/lib/callable-instance.js
+;// CONCATENATED MODULE: ./node_modules/unified/lib/callable-instance.js
 const CallableInstance =
   /**
    * @type {new <Parameters extends Array<unknown>, Result>(property: string | symbol) => (...parameters: Parameters) => Result}
@@ -49057,7 +48252,7 @@ const CallableInstance =
     )
   )
 
-;// CONCATENATED MODULE: ./node_modules/remark/node_modules/unified/lib/index.js
+;// CONCATENATED MODULE: ./node_modules/unified/lib/index.js
 /**
  * @typedef {import('trough').Pipeline} Pipeline
  *
