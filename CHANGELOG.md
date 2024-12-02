@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Fixed: bump `@actions/core` to `1.11.1`.
+
 ## 0.1.2
 
 - Fixed: bump `@actions/github` to `6.0.0`.
