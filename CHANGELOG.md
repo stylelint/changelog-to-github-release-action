@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.1 - 2025-01-01
+
+- No actual changes.
+
 ## 0.2.0
 
 - Added: support for version number heading including other words like a date than a version ([#54][]) ([@jondricek][]).
