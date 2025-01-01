@@ -3,6 +3,7 @@
 ## 0.2.0
 
 - Added: support for version number heading including other words like a date than a version ([#54][]) ([@jondricek][]).
+- Added: support for reference-style links ([#57][]) ([@ybiquitous][]).
 - Fixed: bump `@actions/core` to `1.11.1`.
 
 ## 0.1.2
@@ -49,6 +50,7 @@ Initial release.
 
 [#5]: https://github.com/stylelint/changelog-to-github-release-action/pull/5
 [#54]: https://github.com/stylelint/changelog-to-github-release-action/pull/54
+[#57]: https://github.com/stylelint/changelog-to-github-release-action/pull/57
 
 <!-- In alphabetical order -->
 
