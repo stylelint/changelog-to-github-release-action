@@ -2,7 +2,7 @@
 
 ## 0.2.0
 
-- Added: support for version number heading including other words like a date than a version ([#54]) ([@jondricek]).
+- Added: support for version number heading including other words like a date than a version ([#54][]) ([@jondricek][]).
 - Fixed: bump `@actions/core` to `1.11.1`.
 
 ## 0.1.2
@@ -31,7 +31,7 @@
 
 ## 0.0.4
 
-- Fixed: `@ts-expect-error` comments ([#5]) ([@ybiquitous]).
+- Fixed: `@ts-expect-error` comments ([#5][]) ([@ybiquitous][]).
 
 ## 0.0.3
 
