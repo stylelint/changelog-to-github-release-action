@@ -31,9 +31,11 @@ function extractChangeItems({ version }) {
 			throw new Error(`Not found version: ${version}`);
 		}
 
-		// Rewrite a link to a PR notation (#123) or a user mention (@username).
-		visit(list, 'link', (node, index, parent) => {
+		// Rewrite a link or reference to a PR notation (#123) or a user mention (@username).
+		visit(list, ['link', 'linkReference'], (node, index, parent) => {
 			if (index === undefined || parent === undefined) return CONTINUE;
+
+			if (!('children' in node)) return CONTINUE;
 
 			const [text] = node.children;
 			if (text?.type !== 'text') return CONTINUE;
