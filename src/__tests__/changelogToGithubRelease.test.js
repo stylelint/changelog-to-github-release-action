@@ -24,7 +24,7 @@ const changelog = `
 [@user1]: https://github.com/user1
 `;
 
-test('include reference links correctly', { only: true }, async () => {
+test('rewrite change items including reference links', { only: true }, async () => {
 	const result = await changelogToGithubRelease(changelog, '1.2.0');
 	assert.equal(result, '* reference-style link #456 (@user1).\n');
 });
