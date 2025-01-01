@@ -1,7 +1,9 @@
 # Changelog
 
-## Head
+## 0.2.0
 
+- Added: support for version number heading including other words like a date than a version ([#54][]) ([@jondricek][]).
+- Added: support for reference-style links ([#57][]) ([@ybiquitous][]).
 - Fixed: bump `@actions/core` to `1.11.1`.
 
 ## 0.1.2
@@ -30,7 +32,7 @@
 
 ## 0.0.4
 
-- Fixed: `@ts-expect-error` comments ([#5](https://github.com/stylelint/changelog-to-github-release-action/pull/5)) ([@ybiquitous](https://github.com/ybiquitous)).
+- Fixed: `@ts-expect-error` comments ([#5][]) ([@ybiquitous][]).
 
 ## 0.0.3
 
@@ -43,3 +45,14 @@
 ## 0.0.1
 
 Initial release.
+
+<!-- In numerical order -->
+
+[#5]: https://github.com/stylelint/changelog-to-github-release-action/pull/5
+[#54]: https://github.com/stylelint/changelog-to-github-release-action/pull/54
+[#57]: https://github.com/stylelint/changelog-to-github-release-action/pull/57
+
+<!-- In alphabetical order -->
+
+[@jondricek]: https://github.com/jondricek
+[@ybiquitous]: https://github.com/ybiquitous
