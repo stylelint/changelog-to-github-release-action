@@ -20,7 +20,7 @@ const changelog = `
 ## 0.1.0
 - ccc.
 
-[#456]: https://github.com/foo/bar/pull/123
+[#456]: https://github.com/foo/bar/pull/456
 [@user1]: https://github.com/user1
 `;
 
