@@ -6,6 +6,10 @@ import { changelogToGithubRelease } from '../changelogToGithubRelease.js';
 const changelog = `
 # Changelog
 
+## 1.1.0 - 2024-12-31
+- ddd [#123](https://github.com/foo/bar/pull/123) ([@user](https://github.com/user)).
+- eee.
+
 ## 1.0.0
 - aaa [#123](https://github.com/foo/bar/pull/123) ([@user](https://github.com/user)).
 - bbb.
@@ -13,6 +17,16 @@ const changelog = `
 ## 0.1.0
 - ccc.
 `;
+
+test('rewrite change items for version with date in heading', async () => {
+	const result = await changelogToGithubRelease(changelog, '1.1.0');
+	assert.equal(
+		result,
+		`* ddd #123 (@user).
+* eee.
+`,
+	);
+});
 
 test('rewrite change items matching specified version', async () => {
 	const result = await changelogToGithubRelease(changelog, '1.0.0');

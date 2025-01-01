@@ -50332,7 +50332,12 @@ function extractChangeItems({ version }) {
 
 		visit(tree, 'heading', (node, index, parent) => {
 			const [text] = node.children;
-			if (text?.type === 'text' && text.value === version && parent && index !== undefined) {
+			if (
+				text?.type === 'text' &&
+				text.value.startsWith(version) &&
+				parent &&
+				index !== undefined
+			) {
 				const nextSibling = parent.children[index + 1];
 				if (nextSibling?.type === 'list') {
 					list = nextSibling;
