@@ -50338,10 +50338,12 @@ function extractChangeItems({ version }) {
 				parent &&
 				index !== undefined
 			) {
-				const nextSibling = parent.children[index + 1];
-				if (nextSibling?.type === 'list') {
-					list = nextSibling;
-					return EXIT;
+				const nextSiblings = parent.children.slice(index + 1);
+				for (const sibling of nextSiblings) {
+					if (sibling.type === 'list') {
+						list = sibling;
+						return EXIT;
+					}
 				}
 			}
 			return CONTINUE;

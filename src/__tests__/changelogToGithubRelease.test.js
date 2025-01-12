@@ -6,6 +6,15 @@ import { changelogToGithubRelease } from '../changelogToGithubRelease.js';
 const changelog = `
 # Changelog
 
+## 16.13.0 - 2025-01-12
+
+Summary.
+
+Summary 2.
+
+- fff [#123](https://github.com/foo/bar/pull/123) ([@user](https://github.com/user)).
+- ggg.
+
 ## 1.2.0
 - reference-style link [#456][] ([@user1]).
 
@@ -27,6 +36,11 @@ const changelog = `
 test('rewrite change items including reference links', { only: true }, async () => {
 	const result = await changelogToGithubRelease(changelog, '1.2.0');
 	assert.equal(result, '* reference-style link #456 (@user1).\n');
+});
+
+test('rewrite change items for version with date in heading and a summary', async () => {
+	const result = await changelogToGithubRelease(changelog, '16.13.0');
+	assert.equal(result, '* fff #123 (@user).\n* ggg.\n');
 });
 
 test('rewrite change items for version with date in heading', async () => {
