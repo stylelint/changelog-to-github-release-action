@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 - 2025-02-03
+
+- Fixed: bump `undici` to `5.28.5` for security fix ([#60][]) ([@dependabot][]).
+
 ## 0.2.1 - 2025-01-01
 
 - No actual changes.
@@ -55,8 +59,10 @@ Initial release.
 [#5]: https://github.com/stylelint/changelog-to-github-release-action/pull/5
 [#54]: https://github.com/stylelint/changelog-to-github-release-action/pull/54
 [#57]: https://github.com/stylelint/changelog-to-github-release-action/pull/57
+[#60]: https://github.com/stylelint/changelog-to-github-release-action/pull/60
 
 <!-- In alphabetical order -->
 
+[@dependabot]: https://github.com/dependabot
 [@jondricek]: https://github.com/jondricek
 [@ybiquitous]: https://github.com/ybiquitous
