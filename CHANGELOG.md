@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Fixed: bump `@octokit/request-error` to `5.1.1` for security fix ([#63][]) ([@dependabot][]).
+
 ## 0.2.2 - 2025-02-03
 
 - Fixed: rewrite for entries with a summary ([#58][]) ([@jeddy3][]).
@@ -62,6 +66,7 @@ Initial release.
 [#57]: https://github.com/stylelint/changelog-to-github-release-action/pull/57
 [#58]: https://github.com/stylelint/changelog-to-github-release-action/pull/58
 [#60]: https://github.com/stylelint/changelog-to-github-release-action/pull/60
+[#63]: https://github.com/stylelint/changelog-to-github-release-action/pull/63
 
 <!-- In alphabetical order -->
 
