@@ -28,7 +28,7 @@ async function main() {
 		body,
 		draft,
 	});
-	core.info(`Created release: ${data.html_url}`);
+	core.notice(`Created release: ${data.html_url}`);
 }
 
 if (process.env['NODE_ENV'] !== 'test') {
