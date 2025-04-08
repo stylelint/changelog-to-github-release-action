@@ -27,7 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Create release
-        uses: stylelint/changelog-to-github-release-action@main
+        uses: stylelint/changelog-to-github-release-action@0.2.3
 ```
 
 ## Inputs
@@ -36,7 +36,7 @@ You can tune this action by the input parameters, for example:
 
 ```yaml
 - name: Create release
-  uses: stylelint/changelog-to-github-release-action@main
+  uses: stylelint/changelog-to-github-release-action@0.2.3
   with:
     draft: true
 ```

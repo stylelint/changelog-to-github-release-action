@@ -1,7 +1,9 @@
 # Changelog
 
-## Head
+## 0.2.3 - 2025-04-08
 
+- Fixed: bump `@octokit/plugin-paginate-rest` to `9.2.2` for security fix ([#65][]) ([@dependabot][]).
+- Fixed: bump `@octokit/request` to `8.4.1` for security fix ([#66][]) ([@dependabot][]).
 - Fixed: bump `@octokit/request-error` to `5.1.1` for security fix ([#63][]) ([@dependabot][]).
 
 ## 0.2.2 - 2025-02-03
@@ -67,6 +69,8 @@ Initial release.
 [#58]: https://github.com/stylelint/changelog-to-github-release-action/pull/58
 [#60]: https://github.com/stylelint/changelog-to-github-release-action/pull/60
 [#63]: https://github.com/stylelint/changelog-to-github-release-action/pull/63
+[#65]: https://github.com/stylelint/changelog-to-github-release-action/pull/65
+[#66]: https://github.com/stylelint/changelog-to-github-release-action/pull/66
 
 <!-- In alphabetical order -->
 
