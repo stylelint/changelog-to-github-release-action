@@ -2,7 +2,7 @@
 
 ## Head
 
-- Added: notice message to action run page.
+- Added: notice message to action run page ([#70][]) ([@ybiquitous][]).
 
 ## 0.2.3 - 2025-04-08
 
@@ -75,6 +75,7 @@ Initial release.
 [#63]: https://github.com/stylelint/changelog-to-github-release-action/pull/63
 [#65]: https://github.com/stylelint/changelog-to-github-release-action/pull/65
 [#66]: https://github.com/stylelint/changelog-to-github-release-action/pull/66
+[#70]: https://github.com/stylelint/changelog-to-github-release-action/pull/70
 
 <!-- In alphabetical order -->
 
