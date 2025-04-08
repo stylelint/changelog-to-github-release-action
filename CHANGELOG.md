@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Added: notice message to action run page.
+
 ## 0.2.3 - 2025-04-08
 
 - Fixed: bump `@octokit/plugin-paginate-rest` to `9.2.2` for security fix ([#65][]) ([@dependabot][]).
