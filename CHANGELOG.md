@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.3.0 - 2025-04-08
 
 - Added: notice message to action run page ([#70][]) ([@ybiquitous][]).
 
