@@ -5,6 +5,8 @@ on:
     branches: ['main']
   pull_request:
 
+permissions: read-all
+
 jobs:
   lint:
     uses: stylelint/.github/.github/workflows/lint.yml@main
