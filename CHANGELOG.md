@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Fixed: bump `undici` to 5.29.0 for security fix ([#74][]) ([@dependabot][]).
+
 ## 0.3.0 - 2025-04-08
 
 - Added: notice message to action run page ([#70][]) ([@ybiquitous][]).
@@ -76,6 +80,7 @@ Initial release.
 [#65]: https://github.com/stylelint/changelog-to-github-release-action/pull/65
 [#66]: https://github.com/stylelint/changelog-to-github-release-action/pull/66
 [#70]: https://github.com/stylelint/changelog-to-github-release-action/pull/70
+[#74]: https://github.com/stylelint/changelog-to-github-release-action/pull/74
 
 <!-- In alphabetical order -->
 
