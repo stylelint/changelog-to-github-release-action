@@ -2,7 +2,8 @@
 
 ## Head
 
-- Fixed: bump `undici` to 5.29.0 for security fix ([#74][]) ([@dependabot][]).
+- Fixed: bump `@actions/github` to `6.0.1` ([#76][]) ([@dependabot][]).
+- Fixed: bump `undici` to `5.29.0` for security fix ([#74][]) ([@dependabot][]).
 
 ## 0.3.0 - 2025-04-08
 
@@ -81,6 +82,7 @@ Initial release.
 [#66]: https://github.com/stylelint/changelog-to-github-release-action/pull/66
 [#70]: https://github.com/stylelint/changelog-to-github-release-action/pull/70
 [#74]: https://github.com/stylelint/changelog-to-github-release-action/pull/74
+[#76]: https://github.com/stylelint/changelog-to-github-release-action/pull/76
 
 <!-- In alphabetical order -->
 
