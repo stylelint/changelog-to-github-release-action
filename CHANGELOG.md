@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Fixed: bump `undici` to 5.29.0 for security fix ([#74][]) ([@dependabot][]).
+
 ## 0.3.0 - 2025-04-08
 
 - Added: notice message to action run page ([#70][]) ([@ybiquitous][]).
