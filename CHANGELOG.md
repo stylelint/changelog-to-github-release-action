@@ -80,6 +80,7 @@ Initial release.
 [#65]: https://github.com/stylelint/changelog-to-github-release-action/pull/65
 [#66]: https://github.com/stylelint/changelog-to-github-release-action/pull/66
 [#70]: https://github.com/stylelint/changelog-to-github-release-action/pull/70
+[#74]: https://github.com/stylelint/changelog-to-github-release-action/pull/74
 
 <!-- In alphabetical order -->
 
