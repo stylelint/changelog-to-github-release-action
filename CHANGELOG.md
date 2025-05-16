@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.3.1 - 2025-05-16
 
 - Fixed: bump `@actions/github` to `6.0.1` ([#76][]) ([@dependabot][]).
 - Fixed: bump `undici` to `5.29.0` for security fix ([#74][]) ([@dependabot][]).
