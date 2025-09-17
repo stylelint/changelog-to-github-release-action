@@ -9,8 +9,6 @@ Use the latest version of Node.js and npm.
 
 ## Release
 
-1. Update [`CHANGELOG.md`](CHANGELOG.md) to set the next version and commit the change with a message like `Prepare x.y.z`.
-2. Run `npm version <next_version>`.
-3. Run `git push --follow-tags`.
+Create a release PR from [this GitHub Actions workflow](https://github.com/stylelint/changelog-to-github-release-action/blob/main/.github/workflows/create-release-pr.yml) and merge it.
 
-Then, the [release workflow](.github/workflows/release.yml) will automatically run and a new release will be created.
+After the PR merge, the release will be performed automatically. Check out a new release in [Releases](https://github.com/stylelint/changelog-to-github-release-action/releases).
