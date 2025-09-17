@@ -16,9 +16,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
-      - id: node-version
+      - name: Get Node.js version from package.json
+        id: node-version
         shell: bash
-        run: echo "value=$(npm pkg get 'engines.node')" >> "${GITHUB_OUTPUT}"
+        run: echo "value=$(npm pkg get 'engines.node' | jq -r)" >> "${GITHUB_OUTPUT}"
 
   lint:
     needs: get-node-version
