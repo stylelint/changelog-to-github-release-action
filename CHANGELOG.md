@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Fixed: `name` input's default value when `tag` input is set ([#93][]) ([@ybiquitous][]).
+
 ## 0.5.0 - 2025-09-17
 
 - Added: `name` input to specify release names ([#91][]) ([@ybiquitous][]).
@@ -93,6 +97,7 @@ Initial release.
 [#76]: https://github.com/stylelint/changelog-to-github-release-action/pull/76
 [#83]: https://github.com/stylelint/changelog-to-github-release-action/pull/83
 [#91]: https://github.com/stylelint/changelog-to-github-release-action/pull/91
+[#93]: https://github.com/stylelint/changelog-to-github-release-action/pull/93
 
 <!-- In alphabetical order -->
 

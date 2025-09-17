@@ -9,7 +9,6 @@ inputs:
   name:
     description: 'Release name. Default is the tag name.'
     required: false
-    default: '${{ github.ref_name }}'
   changelog:
     description: 'Changelog file path.'
     required: false

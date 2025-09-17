@@ -7,7 +7,7 @@ import { changelogToGithubRelease } from './changelogToGithubRelease.js';
 
 async function main() {
 	const tag = core.getInput('tag');
-	const name = core.getInput('name');
+	const name = core.getInput('name') || tag;
 	const changelogPath = core.getInput('changelog');
 	const token = core.getInput('token');
 	const draft = core.getInput('draft') === 'true';
