@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.5.1 - 2025-09-17
 
 - Fixed: `name` input's default value when `tag` input is set ([#93][]) ([@ybiquitous][]).
 
