@@ -10,12 +10,15 @@ permissions: read-all
 jobs:
   get-node-version:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.node-version.outputs.value }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
       - id: node-version
         shell: bash
-        run: echo "value=$(npm pkg get engines.node | jq -r)" >> "${GITHUB_OUTPUT}"
+        run: echo "value=$(npm pkg get 'engines.node')" >> "${GITHUB_OUTPUT}"
 
   lint:
     needs: get-node-version
