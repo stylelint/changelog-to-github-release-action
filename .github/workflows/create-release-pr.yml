@@ -32,6 +32,8 @@ jobs:
       - name: Get additional info
         id: get-info
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           echo "latest-tag=$(gh release view --json tagName --jq .tagName)" >> "${GITHUB_OUTPUT}"
 
