@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.4.0 - 2025-09-17
 
 - Changed: bump runner Node.js version from `node20` to `node24` ([#83][]) ([@ybiquitous][]).
 
