@@ -48,6 +48,6 @@ jobs:
         # See https://github.com/stylelint/changelog-to-github-release-action/actions/runs/17795814148
         #
         # uses: ./
-        uses: stylelint/changelog-to-github-release-action@4eb90384febac84b9409220566bac4b96e55e05f # main
+        uses: stylelint/changelog-to-github-release-action@cc1c8437083b4e0432cb7e2bb707a9135dc09141 # main
         with:
           tag: ${{ steps.create-tag.outputs.tag }}
