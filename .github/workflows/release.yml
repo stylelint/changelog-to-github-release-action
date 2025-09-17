@@ -27,6 +27,15 @@ jobs:
 
       - name: Create release
         if: ${{ github.event.pull_request.head.ref == format('release-{0}', steps.get-version.outputs.value) }}
-        uses: ./
+        # NOTE: We cannot use local actions because of the organization-level settings and the follwowing error:
+        #
+        # > The action ./ is not allowed in stylelint/changelog-to-github-release-action because all actions must be from a repository
+        # > owned by stylelint, created by GitHub, or verified in the GitHub Marketplace.
+        # > All actions must also be pinned to a full-length commit SHA.
+        #
+        # See https://github.com/stylelint/changelog-to-github-release-action/actions/runs/17795814148
+        #
+        # uses: ./
+        uses: stylelint/changelog-to-github-release-action@27c30aa2d1b7e31e7845c5fac28f998bd83dd1da # main
         with:
           tag: ${{ steps.get-version.outputs.value }}
