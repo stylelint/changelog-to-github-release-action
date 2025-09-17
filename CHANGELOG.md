@@ -1,6 +1,6 @@
 # Changelog
 
-## Head
+## 0.5.0 - 2025-09-17
 
 - Added: `name` input to specify release names ([#91][]) ([@ybiquitous][]).
 
