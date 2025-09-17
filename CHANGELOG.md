@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Added: `name` input to specify release names ([#91][]) ([@ybiquitous][]).
+
 ## 0.4.0 - 2025-09-17
 
 - Changed: bump runner Node.js version from `node20` to `node24` ([#83][]) ([@ybiquitous][]).
@@ -88,6 +92,7 @@ Initial release.
 [#74]: https://github.com/stylelint/changelog-to-github-release-action/pull/74
 [#76]: https://github.com/stylelint/changelog-to-github-release-action/pull/76
 [#83]: https://github.com/stylelint/changelog-to-github-release-action/pull/83
+[#91]: https://github.com/stylelint/changelog-to-github-release-action/pull/91
 
 <!-- In alphabetical order -->
 

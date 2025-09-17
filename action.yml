@@ -3,23 +3,27 @@ description: 'GitHub Action to convert CHANGELOG to GitHub Release'
 author: 'Stylelint'
 inputs:
   tag:
-    description: 'Tag name'
+    description: 'Tag name.'
+    required: false
+    default: '${{ github.ref_name }}'
+  name:
+    description: 'Release name. Default is the tag name.'
     required: false
     default: '${{ github.ref_name }}'
   changelog:
-    description: 'Changelog file path'
+    description: 'Changelog file path.'
     required: false
     default: 'CHANGELOG.md'
   token:
-    description: 'GitHub token'
+    description: 'GitHub token.'
     required: false
     default: '${{ github.token }}'
   repo:
-    description: 'Repository'
+    description: 'Repository.'
     required: false
     default: '${{ github.repository }}'
   draft:
-    description: 'Whether create a draft release'
+    description: 'Whether create a draft release.'
     required: false
     default: 'false'
 runs:
