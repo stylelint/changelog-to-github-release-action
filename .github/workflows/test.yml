@@ -8,12 +8,23 @@ on:
 permissions: read-all
 
 jobs:
+  get-node-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.node-version.outputs.value }}
+    steps:
+      - id: node-version
+        shell: bash
+        run: echo "value=$(npm pkg get engines.node | jq -r)" >> "${GITHUB_OUTPUT}"
+
   lint:
+    needs: get-node-version
     uses: stylelint/.github/.github/workflows/lint.yml@main
     with:
-      node-version: '20'
+      node-version: ${{ needs.get-node-version.outputs.version }}
 
   test:
+    needs: get-node-version
     uses: stylelint/.github/.github/workflows/test.yml@main
     with:
-      node-version: '["20"]'
+      node-version: ${{ needs.get-node-version.outputs.version}}
