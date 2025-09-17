@@ -2,7 +2,7 @@
 
 ## Head
 
-- Fixed: bump runner Node.js version from `node20` to `node24` ([#83][]) ([@ybiquitous][]).
+- Changed: bump runner Node.js version from `node20` to `node24` ([#83][]) ([@ybiquitous][]).
 
 ## 0.3.1 - 2025-05-16
 
