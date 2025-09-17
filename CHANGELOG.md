@@ -1,5 +1,9 @@
 # Changelog
 
+## Head
+
+- Changed: bump runner Node.js version from `node20` to `node24` ([#83][]) ([@ybiquitous][]).
+
 ## 0.3.1 - 2025-05-16
 
 - Fixed: bump `@actions/github` to `6.0.1` ([#76][]) ([@dependabot][]).
@@ -83,6 +87,7 @@ Initial release.
 [#70]: https://github.com/stylelint/changelog-to-github-release-action/pull/70
 [#74]: https://github.com/stylelint/changelog-to-github-release-action/pull/74
 [#76]: https://github.com/stylelint/changelog-to-github-release-action/pull/76
+[#83]: https://github.com/stylelint/changelog-to-github-release-action/pull/83
 
 <!-- In alphabetical order -->
 
