@@ -27,7 +27,7 @@ jobs:
           NEW_VERSION: ${{ github.event.inputs.new-version }}
         run: |
           npm version "${NEW_VERSION}" --no-git-tag-version
-          echo "value=$(npm pkg get 'version' | jq -r)" >> "${GITHUB_OUTPUT}"
+          echo "new-version=$(npm pkg get 'version' | jq -r)" >> "${GITHUB_OUTPUT}"
 
       - name: Get additional info
         id: get-info
@@ -38,14 +38,14 @@ jobs:
       - name: Create Release PR
         uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
         with:
-          branch: release-${{ steps.bump-version.outputs.value }}
+          branch: release-${{ steps.bump-version.outputs.new-version }}
           assignees: ${{ github.actor }}
-          title: 'Release ${{ steps.bump-version.outputs.value }}'
-          commit-message: 'Release ${{ steps.bump-version.outputs.value }}'
+          title: 'Release ${{ steps.bump-version.outputs.new-version }}'
+          commit-message: 'Release ${{ steps.bump-version.outputs.new-version }}'
           body: |
-            This PR prepares the release of version ${{ steps.bump-version.outputs.value }}. Follow the steps below:
-            1. Review the changes: https://github.com/${{ github.repository }}/compare/${{ steps.get-info.outputs.latest-tag }}...release-${{ steps.bump-version.outputs.value }}
-            2. Update the [changelog](https://github.com/${{ github.repository }}/edit/release-${{ steps.bump-version.outputs.value }}/CHANGELOG.md).
+            This PR prepares the release of version ${{ steps.bump-version.outputs.new-version }}. Follow the steps below:
+            1. Review the changes: https://github.com/${{ github.repository }}/compare/${{ steps.get-info.outputs.latest-tag }}...release-${{ steps.bump-version.outputs.new-version }}
+            2. Update the [changelog](https://github.com/${{ github.repository }}/edit/release-${{ steps.bump-version.outputs.new-version }}/CHANGELOG.md).
             3. Merge this PR.
 
             Then, the release workflow will automatically start. Watch [Actions](https://github.com/${{ github.repository }}/actions/).
