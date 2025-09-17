@@ -31,4 +31,4 @@ jobs:
     needs: get-node-version
     uses: stylelint/.github/.github/workflows/test.yml@main
     with:
-      node-version: ${{ needs.get-node-version.outputs.version}}
+      node-version: '["${{ needs.get-node-version.outputs.version}}"]'
