@@ -48,6 +48,7 @@ jobs:
             This PR prepares the release of version ${{ steps.bump-version.outputs.new-version }}. Follow the steps below:
             1. Review the changes: https://github.com/${{ github.repository }}/compare/${{ steps.get-info.outputs.latest-tag }}...release-${{ steps.bump-version.outputs.new-version }}
             2. Update the [changelog](https://github.com/${{ github.repository }}/edit/release-${{ steps.bump-version.outputs.new-version }}/CHANGELOG.md).
-            3. Merge this PR.
+            3. (Optional) Update the `changelog-to-github-release-action@{SHA}` revision in the [Release workflow](https://github.com/${{ github.repository }}/edit/release-${{ steps.bump-version.outputs.new-version }}/.github/workflows/release.yml).
+            4. Merge this PR.
 
             Then, the release workflow will automatically start. Watch [Actions](https://github.com/${{ github.repository }}/actions/).
