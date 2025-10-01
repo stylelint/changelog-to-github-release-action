@@ -5,12 +5,12 @@ on:
     branches: ['main']
   pull_request:
 
-permissions: read-all
-
 jobs:
   get-node-version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     outputs:
       version: ${{ steps.node-version.outputs.value }}
     steps:
@@ -19,11 +19,11 @@ jobs:
       - name: Get Node.js version from package.json
         id: node-version
         shell: bash
-        run: echo "value=$(npm pkg get 'engines.node' | jq -r)" >> "${GITHUB_OUTPUT}"
+        run: echo "value=$(jq -r '.engines.node' package.json)" >> "${GITHUB_OUTPUT}"
 
   lint:
     needs: get-node-version
-    uses: stylelint/.github/.github/workflows/call-lint.yml@94de5d411af0abade18762a5ae243601d4bbfa98 # 0.1.1
+    uses: stylelint/.github/.github/workflows/call-lint.yml@45666ef076bb454406bde671ade1f0f852eb70cc # 0.2.0
     with:
       node-version: ${{ needs.get-node-version.outputs.version }}
     permissions:
@@ -31,7 +31,7 @@ jobs:
 
   test:
     needs: get-node-version
-    uses: stylelint/.github/.github/workflows/call-test.yml@94de5d411af0abade18762a5ae243601d4bbfa98 # 0.1.1
+    uses: stylelint/.github/.github/workflows/call-test.yml@45666ef076bb454406bde671ade1f0f852eb70cc # 0.2.0
     with:
       node-version: '["${{ needs.get-node-version.outputs.version}}"]'
     permissions:
