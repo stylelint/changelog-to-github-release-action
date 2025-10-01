@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.2 - 2025-10-01
 
 - Fixed: error messages to help troubleshooting ([#98][]) ([@ybiquitous][]).
 
