@@ -23,7 +23,7 @@ jobs:
 
   lint:
     needs: get-node-version
-    uses: stylelint/.github/.github/workflows/lint.yml@5c1fac886fb5f8f74e29e133f36d242770d03ed3 # main
+    uses: stylelint/.github/.github/workflows/call-lint.yml@94de5d411af0abade18762a5ae243601d4bbfa98 # 0.1.1
     with:
       node-version: ${{ needs.get-node-version.outputs.version }}
     permissions:
@@ -31,7 +31,7 @@ jobs:
 
   test:
     needs: get-node-version
-    uses: stylelint/.github/.github/workflows/test.yml@5c1fac886fb5f8f74e29e133f36d242770d03ed3 # main
+    uses: stylelint/.github/.github/workflows/call-test.yml@94de5d411af0abade18762a5ae243601d4bbfa98 # 0.1.1
     with:
       node-version: '["${{ needs.get-node-version.outputs.version}}"]'
     permissions:
