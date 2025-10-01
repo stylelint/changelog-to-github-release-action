@@ -7,6 +7,7 @@ import { visit, CONTINUE, EXIT } from 'unist-util-visit';
  */
 function extractChangeItems({ version }) {
 	return (tree) => {
+		let foundVersion = false;
 		/** @type {import('mdast').List | undefined} */
 		let list;
 
@@ -18,6 +19,7 @@ function extractChangeItems({ version }) {
 				parent &&
 				index !== undefined
 			) {
+				foundVersion = true;
 				const nextSiblings = parent.children.slice(index + 1);
 				for (const sibling of nextSiblings) {
 					if (sibling.type === 'list') {
@@ -29,8 +31,12 @@ function extractChangeItems({ version }) {
 			return CONTINUE;
 		});
 
+		if (!foundVersion) {
+			throw new Error(`Not found the version ${version} in the changelog`);
+		}
+
 		if (!list) {
-			throw new Error(`Not found version: ${version}`);
+			throw new Error(`Not found list under the ${version} heading in the changelog`);
 		}
 
 		// Rewrite a link or reference to a PR notation (#123) or a user mention (@username).

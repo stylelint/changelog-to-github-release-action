@@ -53,14 +53,32 @@ test('rewrite change items matching specified version', async () => {
 	assert.equal(result, '* aaa #123 (@user).\n* bbb.\n');
 });
 
-test('raise an error when a specified version is not found', async () => {
+test('raise an error when a specified version is not found in the changelog', async () => {
 	assert.rejects(
 		async () => {
 			await changelogToGithubRelease(changelog, '2.0.0');
 		},
 		{
 			name: 'Error',
-			message: 'Not found version: 2.0.0',
+			message: 'Not found the version 2.0.0 in the changelog',
+		},
+	);
+});
+
+test('raise an error when a list under the specified version is not found in the changelog', async () => {
+	const invalidChangelog = `
+# Changelog
+## 1.0.0
+No list.
+`;
+
+	assert.rejects(
+		async () => {
+			await changelogToGithubRelease(invalidChangelog, '1.0.0');
+		},
+		{
+			name: 'Error',
+			message: 'Not found list under the 1.0.0 heading in the changelog',
 		},
 	);
 });
