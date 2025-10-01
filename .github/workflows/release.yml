@@ -5,49 +5,11 @@ on:
     branches: [main]
     types: [closed]
 
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: true
-
 jobs:
   release:
-    if: ${{ github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release-') }}
-    runs-on: ubuntu-latest
+    uses: stylelint/.github/.github/workflows/call-release.yml@d8a0a5b9734a79a67803d47b9aa93e31252a0459 # 0.1.0
+    with:
+      publish: false
     permissions:
       contents: write
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Create tag
-        id: create-tag
-        shell: bash
-        env:
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: |
-          NEW_VERSION=$(npm pkg get 'version' | jq -r)
-          if [[ "${PR_BRANCH}" == "release-${NEW_VERSION}" ]]; then
-            git config user.name "${GITHUB_ACTOR}"
-            git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
-            git tag "${NEW_VERSION}"
-            git push origin "${NEW_VERSION}"
-            echo "tag=${NEW_VERSION}" >> "${GITHUB_OUTPUT}"
-          else
-            echo "The branch name does not match the version in package.json. Skipped."
-          fi
-
-      - name: Create release
-        if: ${{ steps.create-tag.outputs.tag }}
-        # NOTE: We cannot use local actions because of the organization-level settings and the follwowing error:
-        #
-        # > The action ./ is not allowed in stylelint/changelog-to-github-release-action because all actions must be from a repository
-        # > owned by stylelint, created by GitHub, or verified in the GitHub Marketplace.
-        # > All actions must also be pinned to a full-length commit SHA.
-        #
-        # See https://github.com/stylelint/changelog-to-github-release-action/actions/runs/17795814148
-        #
-        # uses: ./
-        uses: stylelint/changelog-to-github-release-action@f9268dbcab5978681cbffc06b76bbfe2cce36ae2 # main
-        with:
-          tag: ${{ steps.create-tag.outputs.tag }}
+      id-token: write
