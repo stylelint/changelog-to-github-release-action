@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: error messages to help troubleshooting ([#98][]) ([@ybiquitous][]).
+
 ## 0.5.1 - 2025-09-17
 
 - Fixed: `name` input's default value when `tag` input is set ([#93][]) ([@ybiquitous][]).
@@ -98,6 +102,7 @@ Initial release.
 [#83]: https://github.com/stylelint/changelog-to-github-release-action/pull/83
 [#91]: https://github.com/stylelint/changelog-to-github-release-action/pull/91
 [#93]: https://github.com/stylelint/changelog-to-github-release-action/pull/93
+[#98]: https://github.com/stylelint/changelog-to-github-release-action/pull/98
 
 <!-- In alphabetical order -->
 
