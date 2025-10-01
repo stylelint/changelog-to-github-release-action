@@ -3,7 +3,7 @@ description: 'GitHub Action to convert CHANGELOG to GitHub Release'
 author: 'Stylelint'
 inputs:
   tag:
-    description: 'Tag name.'
+    description: 'Tag name. If it does not exist, it will be automatically created.'
     required: false
     default: '${{ github.ref_name }}'
   name:
