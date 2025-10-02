@@ -8,7 +8,7 @@ updates:
       - 'pr: dependencies'
     versioning-strategy: increase
     groups:
-      development-dependencies:
+      dev-deps:
         dependency-type: development
         exclude-patterns: ['remark-*']
     cooldown:
