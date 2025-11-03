@@ -8,7 +8,6 @@
   "author": "Stylelint",
   "type": "module",
   "scripts": {
-    "prepare": "husky",
     "build": "ncc build src/main.js",
     "build-check": "git diff --exit-code --quiet -- dist/",
     "format": "prettier --write --cache .",
@@ -16,6 +15,7 @@
     "lint:formatting": "prettier . --check --cache",
     "lint:md": "remark . --quiet --frail",
     "lint:types": "tsc",
+    "prepare": "husky",
     "pretest": "npm run lint",
     "test": "node --test && npm run build && npm run build-check",
     "watch": "node --test --watch"
@@ -36,18 +36,18 @@
     "unist-util-visit": "^5.0.0"
   },
   "devDependencies": {
-    "@stylelint/prettier-config": "^3.0.0",
+    "@stylelint/prettier-config": "^4.0.0",
     "@stylelint/remark-preset": "^5.1.1",
     "@tsconfig/node24": "^24.0.1",
     "@tsconfig/strictest": "^2.0.6",
     "@types/mdast": "^4.0.4",
     "@vercel/ncc": "^0.38.4",
     "husky": "^9.1.7",
-    "lint-staged": "^16.2.0",
+    "lint-staged": "^16.2.6",
     "npm-run-all": "^4.1.5",
     "prettier": "^3.6.2",
     "remark-cli": "^12.0.1",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.3"
   },
   "engines": {
     "node": "24"
