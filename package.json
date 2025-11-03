@@ -8,7 +8,6 @@
   "author": "Stylelint",
   "type": "module",
   "scripts": {
-    "prepare": "husky",
     "build": "ncc build src/main.js",
     "build-check": "git diff --exit-code --quiet -- dist/",
     "format": "prettier --write --cache .",
@@ -16,6 +15,7 @@
     "lint:formatting": "prettier . --check --cache",
     "lint:md": "remark . --quiet --frail",
     "lint:types": "tsc",
+    "prepare": "husky",
     "pretest": "npm run lint",
     "test": "node --test && npm run build && npm run build-check",
     "watch": "node --test --watch"
