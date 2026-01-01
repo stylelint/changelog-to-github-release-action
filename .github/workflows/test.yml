@@ -15,7 +15,7 @@ jobs:
       version: ${{ steps.node-version.outputs.value }}
     steps:
       - name: Checkout
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - name: Get Node.js version from package.json
         id: node-version
         shell: bash
@@ -23,7 +23,7 @@ jobs:
 
   lint:
     needs: get-node-version
-    uses: stylelint/.github/.github/workflows/call-lint.yml@f34faf02df201c8c204df4ae2543523ad54ceb07 # 0.3.1
+    uses: stylelint/.github/.github/workflows/call-lint.yml@2844df54744d5b95507c6df844b1422478dd3cc1 # 0.5.0
     with:
       node-version: ${{ needs.get-node-version.outputs.version }}
     permissions:
@@ -31,7 +31,7 @@ jobs:
 
   test:
     needs: get-node-version
-    uses: stylelint/.github/.github/workflows/call-test.yml@f34faf02df201c8c204df4ae2543523ad54ceb07 # 0.3.1
+    uses: stylelint/.github/.github/workflows/call-test.yml@2844df54744d5b95507c6df844b1422478dd3cc1 # 0.5.0
     with:
       node-version: '["${{ needs.get-node-version.outputs.version}}"]'
     permissions:
