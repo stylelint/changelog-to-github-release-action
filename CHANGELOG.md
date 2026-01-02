@@ -2,7 +2,7 @@
 
 ## 0.5.3 - 2026-01-02
 
-- Fixed: bump `@actions/core` to 2.0.1 ([#116][]) ([@dependabot][]).
+- Fixed: bump `@actions/core` to `2.0.1` ([#116][]) ([@dependabot][]).
 
 ## 0.5.2 - 2025-10-01
 
