@@ -1,9 +1,5 @@
 # Changelog
 
-## 0.5.3 - 2026-01-02
-
-- Fixed: bump `@actions/core` to `2.0.1` ([#116][]) ([@dependabot][]).
-
 ## 0.5.2 - 2025-10-01
 
 - Fixed: error messages to help troubleshooting ([#98][]) ([@ybiquitous][]).
@@ -107,7 +103,6 @@ Initial release.
 [#91]: https://github.com/stylelint/changelog-to-github-release-action/pull/91
 [#93]: https://github.com/stylelint/changelog-to-github-release-action/pull/93
 [#98]: https://github.com/stylelint/changelog-to-github-release-action/pull/98
-[#116]: https://github.com/stylelint/changelog-to-github-release-action/pull/116
 
 <!-- In alphabetical order -->
 
