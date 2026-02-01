@@ -33,7 +33,7 @@
     "@actions/core": "^2.0.1",
     "@actions/github": "^7.0.0",
     "remark": "^15.0.1",
-    "unist-util-visit": "^5.0.0"
+    "unist-util-visit": "^5.1.0"
   },
   "devDependencies": {
     "@stylelint/prettier-config": "^4.0.0",

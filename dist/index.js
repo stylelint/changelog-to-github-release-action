@@ -46292,9 +46292,8 @@ function toResult(value) {
 
 ;// CONCATENATED MODULE: ./node_modules/unist-util-visit/lib/index.js
 /**
- * @typedef {import('unist').Node} UnistNode
- * @typedef {import('unist').Parent} UnistParent
- * @typedef {import('unist-util-visit-parents').VisitorResult} VisitorResult
+ * @import {Node as UnistNode, Parent as UnistParent} from 'unist'
+ * @import {VisitorResult} from 'unist-util-visit-parents'
  */
 
 /**
@@ -46344,8 +46343,8 @@ function toResult(value) {
 
 /**
  * @typedef {(
- *   Check extends Array<any>
- *   ? MatchesOne<Value, Check[keyof Check]>
+ *   Check extends ReadonlyArray<any>
+ *   ? MatchesOne<Value, Check[number]>
  *   : MatchesOne<Value, Check>
  * )} Matches
  *   Check whether a node matches a check in the type system.
