@@ -114,6 +114,9 @@ Initial release.
 [#93]: https://github.com/stylelint/changelog-to-github-release-action/pull/93
 [#98]: https://github.com/stylelint/changelog-to-github-release-action/pull/98
 [#116]: https://github.com/stylelint/changelog-to-github-release-action/pull/116
+[#130]: https://github.com/stylelint/changelog-to-github-release-action/pull/130
+[#136]: https://github.com/stylelint/changelog-to-github-release-action/pull/136
+[#137]: https://github.com/stylelint/changelog-to-github-release-action/pull/137
 
 <!-- In alphabetical order -->
 
