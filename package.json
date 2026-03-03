@@ -30,7 +30,7 @@
     ]
   },
   "dependencies": {
-    "@actions/core": "^2.0.2",
+    "@actions/core": "^3.0.0",
     "@actions/github": "^7.0.0",
     "remark": "^15.0.1",
     "unist-util-visit": "^5.1.0"
