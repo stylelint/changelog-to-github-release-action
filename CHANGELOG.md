@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.3 - 2026-03-03
+
+- Fixed: bump `@actions/core` to `3.0.0` ([#136][]) ([@dependabot][]).
+- Fixed: bump `@actions/github` to `9.0.0` ([#137][]) ([@dependabot][]).
+- Fixed: bump `unist-util-visit` to `5.1.0` ([#130][]) ([@dependabot][]).
+
 ## 0.5.3 - 2026-01-02
 
 - Fixed: bump `@actions/core` to `2.0.1` ([#116][]) ([@dependabot][]).
