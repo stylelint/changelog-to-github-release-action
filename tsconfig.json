@@ -2,7 +2,8 @@
 	"extends": ["@tsconfig/strictest/tsconfig", "@tsconfig/node24/tsconfig"],
 	"compilerOptions": {
 		"noEmit": true,
-		"checkJs": true
+		"checkJs": true,
+		"types": ["node"]
 	},
 	"exclude": ["dist/**"]
 }
