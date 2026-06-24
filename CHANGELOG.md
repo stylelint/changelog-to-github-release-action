@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5 - 2026-06-24
+
+- Fixed: bump `@actions/core` to `3.0.1` ([#149][]) ([@dependabot][]).
+- Fixed: bump `@actions/github` to `9.1.1` ([#148][]) ([@dependabot][]).
+- Fixed: bump `undici` to `6.27.0` for security fix ([#140][], [#159][]) ([@dependabot][]).
+
 ## 0.5.4 - 2026-03-03
 
 - Fixed: bump `@actions/core` to `3.0.0` ([#136][]) ([@dependabot][]).
@@ -117,6 +123,10 @@ Initial release.
 [#130]: https://github.com/stylelint/changelog-to-github-release-action/pull/130
 [#136]: https://github.com/stylelint/changelog-to-github-release-action/pull/136
 [#137]: https://github.com/stylelint/changelog-to-github-release-action/pull/137
+[#140]: https://github.com/stylelint/changelog-to-github-release-action/pull/140
+[#148]: https://github.com/stylelint/changelog-to-github-release-action/pull/148
+[#149]: https://github.com/stylelint/changelog-to-github-release-action/pull/149
+[#159]: https://github.com/stylelint/changelog-to-github-release-action/pull/159
 
 <!-- In alphabetical order -->
 
