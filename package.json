@@ -41,12 +41,12 @@
     "@tsconfig/node24": "^24.0.4",
     "@tsconfig/strictest": "^2.0.8",
     "@types/mdast": "^4.0.4",
-    "@vercel/ncc": "^0.44.0",
-    "lint-staged": "^17.0.8",
+    "@vercel/ncc": "^0.44.1",
+    "lint-staged": "^17.2.0",
     "npm-run-all": "^4.1.5",
-    "prettier": "^3.8.4",
+    "prettier": "^3.9.6",
     "remark-cli": "^12.0.1",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "engines": {
     "node": "24"
