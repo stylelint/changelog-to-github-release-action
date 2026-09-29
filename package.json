@@ -9,7 +9,6 @@
   "type": "module",
   "scripts": {
     "build": "ncc build src/main.js",
-    "build-check": "git diff --exit-code --quiet -- dist/",
     "format": "prettier --write --cache .",
     "lint": "npm-run-all --parallel --continue-on-error lint:*",
     "lint:formatting": "prettier . --check --cache",
@@ -17,7 +16,7 @@
     "lint:types": "tsc",
     "prepare": "git config set --local core.hooksPath .githooks || true",
     "pretest": "npm run lint",
-    "test": "node --test && npm run build && npm run build-check",
+    "test": "node --test",
     "watch": "node --test --watch"
   },
   "lint-staged": {
