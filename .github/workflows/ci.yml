@@ -57,6 +57,7 @@ jobs:
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           if git diff --quiet -- dist/; then
+            echo "No changes."
             exit 0
           fi
 
