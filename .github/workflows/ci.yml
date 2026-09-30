@@ -58,7 +58,8 @@ jobs:
           path: dist/
           retention-days: 1
 
-  commit-build:
+  # Use a separate job to limit write permission for security.
+  build-commit:
     needs: build
     runs-on: ubuntu-slim
     timeout-minutes: 10
@@ -72,7 +73,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
       - name: Remove old build
         run: rm -rf dist/ # The artifact can't remove files that the build no longer outputs.
       - name: Download build
@@ -82,7 +82,6 @@ jobs:
           path: dist/
       - name: Commit and push
         env:
-          GITHUB_TOKEN: ${{ github.token }}
           PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           if git diff --quiet -- dist/; then
@@ -94,7 +93,6 @@ jobs:
           git config --local user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
           git add dist/
           git commit -m 'Build dist'
-          gh auth setup-git
           git push origin "HEAD:${PR_BRANCH}"
 
   build-check:
