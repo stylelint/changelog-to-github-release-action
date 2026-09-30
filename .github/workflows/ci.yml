@@ -29,7 +29,7 @@ jobs:
       run:
         shell: bash
     permissions:
-      contents: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +51,35 @@ jobs:
       - &build_build
         name: Build
         run: npm run build
+      - name: Upload build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  commit-build:
+    needs: build
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Remove old build
+        run: rm -rf dist/ # The artifact can't remove files that the build no longer outputs.
+      - name: Download build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
       - name: Commit and push
         env:
           GITHUB_TOKEN: ${{ github.token }}
