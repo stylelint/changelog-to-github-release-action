@@ -30,12 +30,14 @@ jobs:
         shell: bash
     permissions:
       contents: read
+    outputs:
+      changes: ${{ steps.check.outputs.changes }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false # Prevent build-time code from accessing the checkout credentials.
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
       - &build_setup_node
         name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -51,7 +53,16 @@ jobs:
       - &build_build
         name: Build
         run: npm run build
+      - name: Check build
+        id: check
+        run: |
+          if git diff --quiet -- dist/; then
+            echo "No changes."
+          else
+            echo "changes=true" >> "${GITHUB_OUTPUT}"
+          fi
       - name: Upload build
+        if: ${{ steps.check.outputs.changes }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
@@ -61,6 +72,7 @@ jobs:
   # Use a separate job to limit write permission for security.
   build-commit:
     needs: build
+    if: ${{ needs.build.outputs.changes }}
     runs-on: ubuntu-slim
     timeout-minutes: 10
     defaults:
@@ -72,7 +84,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.head_ref }}
+          persist-credentials: false
       - name: Remove old build
         run: rm -rf dist/ # The artifact can't remove files that the build no longer outputs.
       - name: Download build
@@ -81,19 +94,17 @@ jobs:
           name: dist
           path: dist/
       - name: Commit and push
-        env:
-          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           if git diff --quiet -- dist/; then
             echo "No changes."
             exit 0
           fi
 
-          git config --local user.name "${GITHUB_ACTOR}"
-          git config --local user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
           git add dist/
-          git commit -m 'Build dist'
-          git push origin "HEAD:${PR_BRANCH}"
+          git commit -m "Build dist"
+          git push
 
   build-check:
     if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
@@ -109,8 +120,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
-          persist-credentials: false # Prevent build-time code from accessing the checkout credentials.
+          persist-credentials: false
       - *build_setup_node
       - *build_install_npm
       - *build_install_dependencies
