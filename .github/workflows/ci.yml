@@ -36,7 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - &build_setup_node
         name: Set up Node.js
@@ -84,7 +84,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Remove old build
         run: rm -rf dist/ # The artifact can't remove files that the build no longer outputs.
@@ -94,6 +94,8 @@ jobs:
           name: dist
           path: dist/
       - name: Commit and push
+        env:
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           if git diff --quiet -- dist/; then
             echo "No changes."
@@ -104,7 +106,7 @@ jobs:
           git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
           git add dist/
           git commit -m "Build dist"
-          git push
+          git push origin "HEAD:${PR_BRANCH}"
 
   build-check:
     if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
