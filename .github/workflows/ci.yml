@@ -20,8 +20,121 @@ jobs:
     permissions:
       contents: read
 
+  build:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    needs: test
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    outputs:
+      changes: ${{ steps.check.outputs.changes }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - &build_setup_node
+        name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - &build_install_npm
+        name: Install latest npm
+        run: npm install --global npm@latest
+      - &build_install_dependencies
+        name: Install dependencies
+        run: npm ci
+      - &build_build
+        name: Build
+        run: npm run build
+      - name: Check build
+        id: check
+        run: |
+          if git diff --quiet -- dist/; then
+            echo "No changes."
+          else
+            echo "changes=true" >> "${GITHUB_OUTPUT}"
+          fi
+      - name: Upload build
+        if: ${{ steps.check.outputs.changes }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
+
+  # Use a separate job to limit write permission for security.
+  build-commit:
+    needs: build
+    if: ${{ needs.build.outputs.changes }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Remove old build
+        run: rm -rf dist/ # The artifact can't remove files that the build no longer outputs.
+      - name: Download build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+      - name: Commit and push
+        env:
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if git diff --quiet -- dist/; then
+            echo "No changes."
+            exit 0
+          fi
+
+          git config user.name "${GITHUB_ACTOR}"
+          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
+          git add dist/
+          git commit -m "Build dist"
+          git push origin "HEAD:${PR_BRANCH}"
+
+  build-check:
+    if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
+    needs: test
+    runs-on: ubuntu-slim
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - *build_setup_node
+      - *build_install_npm
+      - *build_install_dependencies
+      - *build_build
+      - name: Check build
+        run: |
+          if ! git diff --quiet -- dist/; then
+            echo "::error::Run build and commit."
+            exit 1
+          fi
+
   dependency-review:
-    if: github.event_name == 'pull_request'
+    if: ${{ github.event_name == 'pull_request' }}
     uses: stylelint/.github/.github/workflows/call-dependency-review.yml@ab7979355590956aa96d306dedfda6b2d42c4982 # 1.1.0
     permissions:
       contents: read
