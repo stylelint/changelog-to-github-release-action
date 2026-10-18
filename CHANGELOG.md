@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: package-scoped tags ([#178][]) ([@ybiquitous][]).
 - Fixed: release tag target to use `GITHUB_SHA` ([#176][]) ([@ybiquitous][]).
 
 ## 0.5.5 - 2026-06-24
@@ -132,6 +133,7 @@ Initial release.
 [#149]: https://github.com/stylelint/changelog-to-github-release-action/pull/149
 [#159]: https://github.com/stylelint/changelog-to-github-release-action/pull/159
 [#176]: https://github.com/stylelint/changelog-to-github-release-action/pull/176
+[#178]: https://github.com/stylelint/changelog-to-github-release-action/pull/178
 
 <!-- In alphabetical order -->
 

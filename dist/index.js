@@ -55630,11 +55630,24 @@ const remark = unified().use(remarkParse).use(remarkStringify).freeze()
 
 
 /**
- * @param {{ version: string }} options
+ * @param {string} tag
+ * @returns {string}
+ */
+function extractVersion(tag) {
+	const index = tag.lastIndexOf('@');
+	if (index === -1 || index === tag.length - 1) return tag;
+
+	return tag.slice(index + 1);
+}
+
+/**
+ * @param {{ tag: string }} options
  * @returns {(tree: import('mdast').Root) => void}
  */
-function extractChangeItems({ version }) {
+function extractChangeItems({ tag }) {
 	return (tree) => {
+		const version = extractVersion(tag);
+
 		let foundVersion = false;
 		/** @type {import('mdast').List | undefined} */
 		let list;
@@ -55660,11 +55673,11 @@ function extractChangeItems({ version }) {
 		});
 
 		if (!foundVersion) {
-			throw new Error(`Not found the version ${version} in the changelog`);
+			throw new Error(`Version '${version}' not found in the changelog`);
 		}
 
 		if (!list) {
-			throw new Error(`Not found list under the ${version} heading in the changelog`);
+			throw new Error(`No list found under the version '${version}' heading in the changelog`);
 		}
 
 		// Rewrite a link or reference to a PR notation (#123) or a user mention (@username).
@@ -55686,11 +55699,11 @@ function extractChangeItems({ version }) {
 
 /**
  * @param {string} changelog
- * @param {string} version
+ * @param {string} tag
  * @returns {Promise<string>}
  */
-async function changelogToGithubRelease(changelog, version) {
-	const file = await remark().use(extractChangeItems, { version }).process(changelog);
+async function changelogToGithubRelease(changelog, tag) {
+	const file = await remark().use(extractChangeItems, { tag }).process(changelog);
 
 	return String(file);
 }

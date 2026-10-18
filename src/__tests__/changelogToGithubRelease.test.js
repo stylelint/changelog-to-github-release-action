@@ -38,6 +38,16 @@ test('rewrite change items including reference links', { only: true }, async () 
 	assert.equal(result, '* reference-style link #456 (@user1).\n');
 });
 
+test('match a scoped tag against a version-only heading', async () => {
+	const result = await changelogToGithubRelease(changelog, 'foo@1.2.0');
+	assert.equal(result, '* reference-style link #456 (@user1).\n');
+});
+
+test('match a scoped tag with an npm scope against a version-only heading', async () => {
+	const result = await changelogToGithubRelease(changelog, '@scope/foo@1.2.0');
+	assert.equal(result, '* reference-style link #456 (@user1).\n');
+});
+
 test('rewrite change items for version with date in heading and a summary', async () => {
 	const result = await changelogToGithubRelease(changelog, '16.13.0');
 	assert.equal(result, '* fff #123 (@user).\n* ggg.\n');
@@ -53,6 +63,18 @@ test('rewrite change items matching specified version', async () => {
 	assert.equal(result, '* aaa #123 (@user).\n* bbb.\n');
 });
 
+test('raise an error when a tag ends with "@"', async () => {
+	assert.rejects(
+		async () => {
+			await changelogToGithubRelease(changelog, 'foo@');
+		},
+		{
+			name: 'Error',
+			message: "Version 'foo@' not found in the changelog",
+		},
+	);
+});
+
 test('raise an error when a specified version is not found in the changelog', async () => {
 	assert.rejects(
 		async () => {
@@ -60,7 +82,7 @@ test('raise an error when a specified version is not found in the changelog', as
 		},
 		{
 			name: 'Error',
-			message: 'Not found the version 2.0.0 in the changelog',
+			message: "Version '2.0.0' not found in the changelog",
 		},
 	);
 });
@@ -78,7 +100,7 @@ No list.
 		},
 		{
 			name: 'Error',
-			message: 'Not found list under the 1.0.0 heading in the changelog',
+			message: "No list found under the version '1.0.0' heading in the changelog",
 		},
 	);
 });
