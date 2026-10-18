@@ -55709,6 +55709,7 @@ async function main() {
 	const changelogPath = getInput('changelog');
 	const token = getInput('token');
 	const draft = getInput('draft') === 'true';
+	const latest = getInput('latest') === 'false' ? 'false' : 'true';
 	const repository = getInput('repo');
 
 	const [owner, repo] = repository.split('/', 2);
@@ -55727,6 +55728,7 @@ async function main() {
 		name,
 		body,
 		draft,
+		make_latest: latest,
 	});
 	notice(`Created release: ${data.html_url}`);
 }

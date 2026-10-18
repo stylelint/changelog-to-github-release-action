@@ -25,6 +25,10 @@ inputs:
     description: 'Whether create a draft release.'
     required: false
     default: 'false'
+  latest:
+    description: 'Whether set this release as the latest. Unused for draft releases.'
+    required: false
+    default: 'true'
 runs:
   using: 'node24'
   main: 'dist/index.js'

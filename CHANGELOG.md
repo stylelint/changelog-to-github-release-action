@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added: `latest` input to set the release as the latest ([#XXX][]) ([@ybiquitous][]).
+
 ## 0.5.5 - 2026-06-24
 
 - Fixed: bump `@actions/core` to `3.0.1` ([#149][]) ([@dependabot][]).
@@ -127,6 +131,7 @@ Initial release.
 [#148]: https://github.com/stylelint/changelog-to-github-release-action/pull/148
 [#149]: https://github.com/stylelint/changelog-to-github-release-action/pull/149
 [#159]: https://github.com/stylelint/changelog-to-github-release-action/pull/159
+[#XXX]: https://github.com/stylelint/changelog-to-github-release-action/pull/XXX
 
 <!-- In alphabetical order -->
 

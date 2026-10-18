@@ -11,6 +11,7 @@ async function main() {
 	const changelogPath = core.getInput('changelog');
 	const token = core.getInput('token');
 	const draft = core.getInput('draft') === 'true';
+	const latest = core.getInput('latest') === 'false' ? 'false' : 'true';
 	const repository = core.getInput('repo');
 
 	const [owner, repo] = repository.split('/', 2);
@@ -29,6 +30,7 @@ async function main() {
 		name,
 		body,
 		draft,
+		make_latest: latest,
 	});
 	core.notice(`Created release: ${data.html_url}`);
 }
