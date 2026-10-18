@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added: `id`/`html_url`/`upload_url` outputs ([#XXX][]) ([@ybiquitous][]).
 - Fixed: package-scoped tags ([#178][]) ([@ybiquitous][]).
 - Fixed: release tag target to use `GITHUB_SHA` ([#176][]) ([@ybiquitous][]).
 
