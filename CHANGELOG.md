@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added: `latest` input to set the release as the latest ([#177][]) ([@ybiquitous][]).
+- Added: `latest` input to set a release as the latest ([#177][]) ([@ybiquitous][]).
 
 ## 0.5.5 - 2026-06-24
 
