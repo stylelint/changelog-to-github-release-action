@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Added: `latest` input to set the release as the latest ([#XXX][]) ([@ybiquitous][]).
+- Added: `latest` input to set the release as the latest ([#177][]) ([@ybiquitous][]).
 
 ## 0.5.5 - 2026-06-24
 
@@ -131,7 +131,7 @@ Initial release.
 [#148]: https://github.com/stylelint/changelog-to-github-release-action/pull/148
 [#149]: https://github.com/stylelint/changelog-to-github-release-action/pull/149
 [#159]: https://github.com/stylelint/changelog-to-github-release-action/pull/159
-[#XXX]: https://github.com/stylelint/changelog-to-github-release-action/pull/XXX
+[#177]: https://github.com/stylelint/changelog-to-github-release-action/pull/177
 
 <!-- In alphabetical order -->
 
