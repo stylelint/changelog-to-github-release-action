@@ -29712,7 +29712,7 @@ function utils_toCommandValue(input) {
  * @returns The command properties to send with the actual annotation command
  * See IssueCommandProperties: https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionCommandManager.cs#L646
  */
-function utils_toCommandProperties(annotationProperties) {
+function toCommandProperties(annotationProperties) {
     if (!Object.keys(annotationProperties).length) {
         return {};
     }
@@ -32523,7 +32523,7 @@ function core_debug(message) {
  * @param properties optional properties to add to the annotation.
  */
 function core_error(message, properties = {}) {
-    command_issueCommand('error', utils_toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('error', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Adds a warning issue
@@ -32531,7 +32531,7 @@ function core_error(message, properties = {}) {
  * @param properties optional properties to add to the annotation.
  */
 function warning(message, properties = {}) {
-    issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('warning', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Adds a notice issue
@@ -32539,7 +32539,7 @@ function warning(message, properties = {}) {
  * @param properties optional properties to add to the annotation.
  */
 function notice(message, properties = {}) {
-    command_issueCommand('notice', utils_toCommandProperties(properties), message instanceof Error ? message.toString() : message);
+    command_issueCommand('notice', toCommandProperties(properties), message instanceof Error ? message.toString() : message);
 }
 /**
  * Writes info to log with console.log.
@@ -55703,6 +55703,9 @@ async function changelogToGithubRelease(changelog, version) {
 
 
 
+// A full Git object ID (SHA-1)
+const COMMIT_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
 async function main() {
 	const tag = getInput('tag');
 	const name = getInput('name') || tag;
@@ -55710,10 +55713,15 @@ async function main() {
 	const token = getInput('token');
 	const draft = getInput('draft') === 'true';
 	const repository = getInput('repo');
+	const targetCommitish = process.env['GITHUB_SHA'];
 
 	const [owner, repo] = repository.split('/', 2);
 	if (!(owner && repo)) {
 		throw new Error(`Invalid 'repo' input: ${repository}`);
+	}
+
+	if (!targetCommitish || !COMMIT_SHA_PATTERN.test(targetCommitish)) {
+		throw new Error(`Invalid 'GITHUB_SHA' environment variable: ${targetCommitish}`);
 	}
 
 	const changelog = await (0,promises_namespaceObject.readFile)(changelogPath, 'utf-8');
@@ -55727,8 +55735,13 @@ async function main() {
 		name,
 		body,
 		draft,
+		target_commitish: targetCommitish,
 	});
-	notice(`Created release: ${data.html_url}`);
+	if (draft) {
+		warning(`Created a draft release. Publish it when ready: ${data.html_url}`);
+	} else {
+		notice(`Created release: ${data.html_url}`);
+	}
 }
 
 if (process.env['NODE_ENV'] !== 'test') {
@@ -55736,7 +55749,7 @@ if (process.env['NODE_ENV'] !== 'test') {
 		if (error instanceof Error) {
 			core_error(error);
 		}
-		setFailed('Unexpexted error raised');
+		setFailed('Unexpected error raised');
 	});
 }
 
