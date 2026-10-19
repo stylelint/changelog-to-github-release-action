@@ -27,6 +27,13 @@ inputs:
     description: 'Whether create a draft release.'
     required: false
     default: 'false'
+outputs:
+  id:
+    description: 'Release ID.'
+  html_url:
+    description: 'URL to the release web page.'
+  upload_url:
+    description: 'URL for uploading assets to the release.'
 runs:
   using: 'node24'
   main: 'dist/index.js'

@@ -39,6 +39,11 @@ async function main() {
 		draft,
 		target_commitish: targetCommitish,
 	});
+
+	core.setOutput('id', data.id);
+	core.setOutput('html_url', data.html_url);
+	core.setOutput('upload_url', data.upload_url);
+
 	if (draft) {
 		core.warning(`Created a draft release. Publish it when ready: ${data.html_url}`);
 	} else {

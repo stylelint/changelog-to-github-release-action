@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added: `id`/`html_url`/`upload_url` outputs ([#179][]) ([@ybiquitous][]).
 - Fixed: package-scoped tags ([#178][]) ([@ybiquitous][]).
 - Fixed: release tag target to use `GITHUB_SHA` ([#176][]) ([@ybiquitous][]).
 
@@ -134,6 +135,7 @@ Initial release.
 [#159]: https://github.com/stylelint/changelog-to-github-release-action/pull/159
 [#176]: https://github.com/stylelint/changelog-to-github-release-action/pull/176
 [#178]: https://github.com/stylelint/changelog-to-github-release-action/pull/178
+[#179]: https://github.com/stylelint/changelog-to-github-release-action/pull/179
 
 <!-- In alphabetical order -->
 
