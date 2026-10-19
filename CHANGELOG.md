@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 - 2026-10-19
 
 - Added: `id`/`html_url`/`upload_url` outputs ([#179][]) ([@ybiquitous][]).
 - Fixed: package-scoped tags ([#178][]) ([@ybiquitous][]).
