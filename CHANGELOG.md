@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 - 2026-10-30
+
+- Fixed: bump `undici` to `6.29.1` for security fix ([#181][]) ([@dependabot][]).
+
 ## 0.6.0 - 2026-10-19
 
 - Added: `id`/`html_url`/`upload_url` outputs ([#179][]) ([@ybiquitous][]).
@@ -136,6 +140,7 @@ Initial release.
 [#176]: https://github.com/stylelint/changelog-to-github-release-action/pull/176
 [#178]: https://github.com/stylelint/changelog-to-github-release-action/pull/178
 [#179]: https://github.com/stylelint/changelog-to-github-release-action/pull/179
+[#181]: https://github.com/stylelint/changelog-to-github-release-action/pull/181
 
 <!-- In alphabetical order -->
 
