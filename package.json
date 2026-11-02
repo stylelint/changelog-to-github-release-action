@@ -47,7 +47,13 @@
     "remark-cli": "^12.0.1",
     "typescript": "^7.0.2"
   },
-  "engines": {
-    "node": "24"
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24"
+    },
+    "packageManager": {
+      "name": "npm"
+    }
   }
 }
