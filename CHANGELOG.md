@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 - 2026-11-02
+
+- Fixed: bump `unist-util-visit` to `5.2.0` ([#188][]) ([@dependabot][]).
+
 ## 0.6.1 - 2026-10-30
 
 - Fixed: bump `undici` to `6.29.1` for security fix ([#181][]) ([@dependabot][]).
@@ -141,6 +145,7 @@ Initial release.
 [#178]: https://github.com/stylelint/changelog-to-github-release-action/pull/178
 [#179]: https://github.com/stylelint/changelog-to-github-release-action/pull/179
 [#181]: https://github.com/stylelint/changelog-to-github-release-action/pull/181
+[#188]: https://github.com/stylelint/changelog-to-github-release-action/pull/188
 
 <!-- In alphabetical order -->
 
